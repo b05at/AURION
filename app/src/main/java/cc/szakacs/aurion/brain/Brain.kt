@@ -25,6 +25,10 @@ data class ScreenInput(
     val image: android.graphics.Bitmap?,
     val isSelection: Boolean,
     val app: String? = null,
+    /** Name eines angehängten Dokuments */
+    val title: String? = null,
+    /** Abschnittsweise Zusammenfassung langer Dokumente */
+    val digest: String? = null,
 )
 
 enum class CardKind { REMINDER, SHOPPING, MEMORY, WEATHER, NONE }
@@ -574,13 +578,23 @@ class Brain(private val ctx: Context) {
         var user = text
         var image: android.graphics.Bitmap? = null
         if (sc != null) {
-            val what = if (sc.isSelection) t(lang, "einem Bereich, den der Nutzer auf dem Bildschirm markiert hat", "an area the user selected on screen")
-            else t(lang, "dem aktuellen Bildschirm des Nutzers", "the user's current screen")
+            val what = when {
+                sc.title != null -> t(lang, "das angehängte Dokument „${sc.title}“", "the attached document \"${sc.title}\"")
+                sc.isSelection -> t(lang, "einem Bereich, den der Nutzer auf dem Bildschirm markiert hat", "an area the user selected on screen")
+                else -> t(lang, "dem aktuellen Bildschirm des Nutzers", "the user's current screen")
+            }
             val sb = StringBuilder()
             sb.append(t(lang, "Die Frage bezieht sich auf $what.", "The question refers to $what."))
             sc.app?.let { sb.append(t(lang, " App: $it.", " App: $it.")) }
             if (sc.labels.isNotEmpty()) sb.append(t(lang, "\nErkannte Objekte: ", "\nDetected objects: ")).append(sc.labels.joinToString(", "))
-            if (sc.text.isNotBlank()) sb.append(t(lang, "\nErkannter Text:\n", "\nRecognized text:\n")).append(sc.text.take(2500))
+            val wantsSummary = Regex("zusammenfass|fasse|worum geht|überblick|summar|overview|tl;?dr").containsMatchIn(user.lowercase())
+            if (sc.digest != null && (wantsSummary || sc.text.length > 2600)) {
+                sb.append(t(lang, "\nZusammenfassung aller Abschnitte:\n", "\nSummary of all sections:\n")).append(sc.digest.take(2200))
+            }
+            if (sc.text.isNotBlank() && !(wantsSummary && sc.digest != null)) {
+                val budget = if (sc.digest != null) 1400 else 2600
+                sb.append(t(lang, "\nText (relevante Auszüge):\n", "\nText (relevant excerpts):\n")).append(excerpt(sc.text, user, budget))
+            }
             if (llm.supportsVision && sc.image != null) {
                 image = sc.image
                 sb.append(t(lang, "\nDas Bild ist beigefügt.", "\nThe image is attached."))
@@ -685,6 +699,25 @@ class Brain(private val ctx: Context) {
             BringItem(o.getString("name"), o.optString("spec", ""))
         }.filter { it.name.isNotBlank() }
     }.getOrDefault(emptyList())
+
+    /** Wählt bei langen Texten die zur Frage passendsten Abschnitte (einfache lokale Suche) */
+    private fun excerpt(text: String, question: String, budget: Int): String {
+        if (text.length <= budget) return text
+        val chunks = text.split(Regex("\n\\s*\n")).flatMap { p -> p.chunked(600) }.filter { it.isNotBlank() }
+        val words = question.lowercase().split(Regex("[^\\p{L}\\p{N}]+")).filter { it.length > 3 }.toSet()
+        val scored = chunks.mapIndexed { i, c ->
+            val lc = c.lowercase()
+            val score = words.sumOf { w -> if (lc.contains(w)) 3 else if (w.length > 5 && lc.contains(w.take(5))) 1 else 0 }
+            Triple(i, c, score + if (i == 0) 1 else 0)
+        }
+        val picked = ArrayList<Triple<Int, String, Int>>()
+        var used = 0
+        for (c in scored.sortedByDescending { it.third }) {
+            if (used + c.second.length > budget) continue
+            picked += c; used += c.second.length
+        }
+        return picked.sortedBy { it.first }.joinToString("\n[…]\n") { it.second }
+    }
 
     /** Häufige Tippfehler bei Befehlswörtern korrigieren, damit Befehle trotzdem erkannt werden */
     private fun normalize(t: String): String {

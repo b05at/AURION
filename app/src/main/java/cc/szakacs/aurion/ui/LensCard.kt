@@ -68,11 +68,16 @@ fun LensCard(lens: LensState, vm: AssistantViewModel, modifier: Modifier = Modif
             }
             Column(Modifier.weight(1f)) {
                 Text(
-                    if (lens.image != null) "Auswahl" else "Geteilter Text",
-                    style = MaterialTheme.typography.titleMedium, color = AurionColors.TextHigh
+                    lens.title ?: if (lens.image != null) "Auswahl" else "Geteilter Text",
+                    style = MaterialTheme.typography.titleMedium, color = AurionColors.TextHigh,
+                    maxLines = 2
                 )
                 when {
-                    lens.analyzing -> Shimmer("Analysiere …")
+                    lens.analyzing -> Shimmer(lens.progress ?: "Analysiere …")
+                    lens.title != null && r != null && r.labels.isEmpty() -> Text(
+                        "${r.text.length} Zeichen" + (lens.progress?.let { " · $it" } ?: ""),
+                        color = AurionColors.TextMid, style = MaterialTheme.typography.bodyMedium
+                    )
                     r != null && r.labels.isNotEmpty() -> Text(r.labels.joinToString(" · "), color = AurionColors.Cyan, style = MaterialTheme.typography.bodyMedium)
                     r != null && r.text.isNotBlank() -> Text("${r.text.lines().size} Zeilen Text erkannt", color = AurionColors.TextMid, style = MaterialTheme.typography.bodyMedium)
                     else -> Text("Nichts Eindeutiges erkannt", color = AurionColors.TextMid, style = MaterialTheme.typography.bodyMedium)
@@ -85,12 +90,12 @@ fun LensCard(lens: LensState, vm: AssistantViewModel, modifier: Modifier = Modif
         if (lens.answering || lens.answer != null) {
             Spacer(Modifier.size(10.dp))
             Box(Modifier.fillMaxWidth().heightIn(max = 260.dp).verticalScroll(rememberScrollState())) {
-                if (lens.answer.isNullOrBlank()) Shimmer("Aurion denkt nach …") else MarkdownText(lens.answer)
+                if (lens.answer.isNullOrBlank()) Shimmer(lens.progress ?: "Aurion denkt nach …") else MarkdownText(lens.answer)
             }
         }
 
         // Erkannter Text
-        if (r != null && r.text.isNotBlank() && lens.image != null) {
+        if (r != null && r.text.isNotBlank() && lens.image != null && lens.title == null) {
             Spacer(Modifier.size(10.dp))
             Text(
                 r.text.take(600),

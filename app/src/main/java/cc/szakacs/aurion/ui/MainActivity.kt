@@ -95,6 +95,15 @@ class MainActivity : ComponentActivity() {
             Intent.ACTION_PROCESS_TEXT -> intent.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)?.toString()
             else -> null
         }
+        val streamUri: android.net.Uri? = if (intent.action == Intent.ACTION_SEND) {
+            if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(Intent.EXTRA_STREAM, android.net.Uri::class.java)
+            else @Suppress("DEPRECATION") intent.getParcelableExtra<android.net.Uri>(Intent.EXTRA_STREAM)
+        } else null
+        if (streamUri != null && intent.type?.startsWith("image/") != true) {
+            requestedTab = "chat"
+            vm.attach(streamUri)
+            return
+        }
         val imageUri: android.net.Uri? = if (intent.action == Intent.ACTION_SEND && intent.type?.startsWith("image/") == true) {
             if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(Intent.EXTRA_STREAM, android.net.Uri::class.java)
             else @Suppress("DEPRECATION") intent.getParcelableExtra<android.net.Uri>(Intent.EXTRA_STREAM)

@@ -28,6 +28,12 @@ data class LensState(
     val result: cc.szakacs.aurion.vision.VisionResult? = null,
     val answer: String? = null,
     val answering: Boolean = false,
+    /** Dateiname bei angehängten Dokumenten */
+    val title: String? = null,
+    /** Fortschritt, z. B. "Lese Seite 2 von 5 …" */
+    val progress: String? = null,
+    /** Abschnittsweise Zusammenfassung langer Dokumente */
+    val digest: String? = null,
 )
 
 data class AssistUiState(
@@ -112,7 +118,10 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
     private fun screenProvider(): (suspend () -> ScreenInput?) = provider@{
         val lens = _state.value.lens
         if (lens?.result != null) {
-            return@provider ScreenInput(lens.result.text, lens.result.labels, lens.image, isSelection = true)
+            return@provider ScreenInput(
+                lens.result.text, lens.result.labels, lens.image, isSelection = true,
+                title = lens.title, digest = lens.digest
+            )
         }
         val shot = ScreenContext.screenshot.value
         val structureText = ScreenContext.text.value
@@ -196,6 +205,62 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
         val r = cc.szakacs.aurion.vision.VisionResult(text, emptyList(), Vision.extractEntities(text))
         _state.value = _state.value.copy(lens = LensState(null, analyzing = false, result = r), reply = null)
         if (LlmEngine.get(ctx).isAvailable) submit(if (text.length > 400) "Fasse das kurz zusammen." else "Erkläre kurz, worum es hier geht.", spoken = false)
+    }
+
+    // ================= Anhänge =================
+
+    /** Bild, Foto oder Dokument aus dem Chat anhängen */
+    fun attach(uri: android.net.Uri) {
+        speech.stop(); speaker.stop()
+        _state.value = _state.value.copy(
+            lens = LensState(null, analyzing = true, title = "Anhang", progress = "Öffne Anhang …"), reply = null
+        )
+        viewModelScope.launch {
+            try {
+                when (val a = cc.szakacs.aurion.vision.DocumentReader.read(ctx, uri) { p ->
+                    _state.value = _state.value.copy(lens = _state.value.lens?.copy(progress = p))
+                }) {
+                    is cc.szakacs.aurion.vision.Attachment.Image -> analyzeImage(a.bitmap)
+                    is cc.szakacs.aurion.vision.Attachment.Document -> analyzeDocument(a.name, a.text, a.preview, a.pages)
+                }
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(lens = null, hint = "Anhang: ${e.message ?: "konnte nicht gelesen werden"}")
+            }
+        }
+    }
+
+    fun attachPhoto(bitmap: android.graphics.Bitmap) = analyzeImage(bitmap)
+
+    private suspend fun analyzeDocument(name: String, text: String, preview: android.graphics.Bitmap?, pages: Int) {
+        if (text.isBlank()) {
+            _state.value = _state.value.copy(lens = null, hint = "In „$name“ habe ich keinen Text gefunden.")
+            return
+        }
+        val r = cc.szakacs.aurion.vision.VisionResult(text, emptyList(), Vision.extractEntities(text.take(20_000)))
+        _state.value = _state.value.copy(
+            lens = LensState(preview, analyzing = false, result = r, title = name, progress = null)
+        )
+        val llm = LlmEngine.get(ctx)
+        if (!llm.isAvailable) return
+        // Lange Dokumente: erst Abschnitt für Abschnitt zusammenfassen
+        if (text.length > 3500) {
+            val chunks = text.chunked(2800).take(8)
+            val parts = ArrayList<String>()
+            chunks.forEachIndexed { i, c ->
+                _state.value = _state.value.copy(lens = _state.value.lens?.copy(progress = "Lese Abschnitt ${i + 1} von ${chunks.size} …", answering = true))
+                val sum = runCatching {
+                    llm.chat(
+                        "Fasse den folgenden Abschnitt eines Dokuments in 3–6 knappen Stichpunkten auf Deutsch zusammen. Nur die Stichpunkte.",
+                        emptyList(), c, temperature = 0.2f
+                    )
+                }.getOrDefault("")
+                if (sum.isNotBlank()) parts += "Abschnitt ${i + 1}:\n$sum"
+            }
+            _state.value = _state.value.copy(lens = _state.value.lens?.copy(digest = parts.joinToString("\n\n"), progress = null))
+        }
+        val q = if (pages > 0 || text.length > 600) "Fasse das Dokument zusammen: Worum geht es, was sind die wichtigsten Punkte und gibt es Fristen, Beträge oder To-dos?"
+        else "Worum geht es in diesem Text? Fasse kurz zusammen."
+        submit(q, spoken = false)
     }
 
     /** Artikel in Bring! abhaken (aus der Einkaufskarte) */

@@ -38,7 +38,11 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Description
+import androidx.compose.material.icons.rounded.Image
+import androidx.compose.material.icons.rounded.PhotoCamera
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Snooze
@@ -164,6 +168,12 @@ fun ChatScreen(vm: AssistantViewModel) {
             Text(it, color = AurionColors.Amber, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 20.dp))
         }
 
+        // Anhänge
+        var attachMenu by remember { mutableStateOf(false) }
+        val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let { vm.attach(it) } }
+        val takePhoto = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bmp -> bmp?.let { vm.attachPhoto(it) } }
+        val pickDoc = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let { vm.attach(it) } }
+
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -175,6 +185,45 @@ fun ChatScreen(vm: AssistantViewModel) {
                     .background(AurionColors.Glass),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                Box {
+                    IconButton(onClick = { attachMenu = true }) {
+                        Icon(Icons.Rounded.Add, "Anhängen", tint = AurionColors.Cyan)
+                    }
+                    androidx.compose.material3.DropdownMenu(
+                        expanded = attachMenu,
+                        onDismissRequest = { attachMenu = false },
+                        containerColor = AurionColors.SurfaceHigh,
+                    ) {
+                        androidx.compose.material3.DropdownMenuItem(
+                            text = { Text("Bild aus Galerie") },
+                            leadingIcon = { Icon(Icons.Rounded.Image, null, tint = AurionColors.Cyan) },
+                            onClick = {
+                                attachMenu = false
+                                pickImage.launch(androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                            }
+                        )
+                        androidx.compose.material3.DropdownMenuItem(
+                            text = { Text("Foto aufnehmen") },
+                            leadingIcon = { Icon(Icons.Rounded.PhotoCamera, null, tint = AurionColors.Cyan) },
+                            onClick = { attachMenu = false; takePhoto.launch(null) }
+                        )
+                        androidx.compose.material3.DropdownMenuItem(
+                            text = { Text("Dokument (PDF, Word, Text …)") },
+                            leadingIcon = { Icon(Icons.Rounded.Description, null, tint = AurionColors.Cyan) },
+                            onClick = {
+                                attachMenu = false
+                                pickDoc.launch(
+                                    arrayOf(
+                                        "application/pdf", "text/*", "application/json", "application/xml",
+                                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                                        "application/vnd.oasis.opendocument.text", "image/*",
+                                    )
+                                )
+                            }
+                        )
+                    }
+                }
                 TextField(
                     value = input,
                     onValueChange = { input = it },
@@ -634,6 +683,28 @@ private fun ModelSection() {
     var importing by remember { mutableStateOf(false) }
     var installed by remember { mutableStateOf(ModelManager.installed(ctx)) }
     var hfToken by remember { mutableStateOf(settings.hfToken ?: "") }
+    var toDelete by remember { mutableStateOf<File?>(null) }
+
+    fun delete(f: File) {
+        if (current == f.absolutePath) {
+            LlmEngine.get(ctx).release()
+            settings.modelPath = null
+            current = null
+        }
+        f.delete()
+        installed = ModelManager.installed(ctx)
+    }
+
+    toDelete?.let { f ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { toDelete = null },
+            title = { Text("Modell löschen?") },
+            text = { Text("${f.name} (${sizeLabel(f.length())}) wird vom Gerät entfernt. Du kannst es später wieder herunterladen.") },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = { delete(f); toDelete = null }) { Text("Löschen", color = AurionColors.Amber) } },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { toDelete = null }) { Text("Abbrechen") } },
+            containerColor = AurionColors.SurfaceHigh,
+        )
+    }
 
     LaunchedEffect(dl?.running) {
         while (dl?.running == true) {
@@ -680,8 +751,20 @@ private fun ModelSection() {
                     Text(opt.title, style = MaterialTheme.typography.titleMedium, color = AurionColors.TextHigh)
                     Text("${opt.description} · ${opt.sizeLabel}", style = MaterialTheme.typography.bodyMedium, color = AurionColors.TextMid)
                     Spacer(Modifier.height(6.dp))
+                    if (file != null) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                (if (current == file.absolutePath) "✓ Aktiv · " else "Installiert · ") + sizeLabel(file.length()),
+                                color = if (current == file.absolutePath) AurionColors.Cyan else AurionColors.TextMid,
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(onClick = { toDelete = file }) {
+                                Icon(Icons.Rounded.DeleteOutline, "Modell löschen", tint = AurionColors.TextMid)
+                            }
+                        }
+                    }
                     when {
-                        file != null && current == file.absolutePath -> Text("✓ Aktiv", color = AurionColors.Cyan)
+                        file != null && current == file.absolutePath -> Unit
                         file != null -> SecondaryButton("Verwenden") {
                             settings.modelPath = file.absolutePath
                             LlmEngine.get(ctx).release()
@@ -719,6 +802,34 @@ private fun ModelSection() {
                         }
                     }
                 }
+            }
+            // Eigene, importierte Modelle
+            installed.filter { f -> ModelManager.options.none { it.fileName == f.name } }.forEach { f ->
+                Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(f.name, style = MaterialTheme.typography.titleMedium, color = AurionColors.TextHigh)
+                        Text(
+                            (if (current == f.absolutePath) "✓ Aktiv · " else "Eigenes Modell · ") + sizeLabel(f.length()),
+                            color = if (current == f.absolutePath) AurionColors.Cyan else AurionColors.TextMid,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                    if (current != f.absolutePath) SecondaryButton("Verwenden") {
+                        settings.modelPath = f.absolutePath
+                        LlmEngine.get(ctx).release()
+                        current = f.absolutePath
+                    }
+                    IconButton(onClick = { toDelete = f }) {
+                        Icon(Icons.Rounded.DeleteOutline, "Modell löschen", tint = AurionColors.TextMid)
+                    }
+                }
+            }
+            if (installed.isNotEmpty()) {
+                val free = remember(installed) { ModelManager.modelDir(ctx).usableSpace }
+                Text(
+                    "Belegt: ${sizeLabel(installed.sumOf { it.length() })} · Frei: ${sizeLabel(free)}",
+                    style = MaterialTheme.typography.bodyMedium, color = AurionColors.TextLow, modifier = Modifier.padding(top = 10.dp)
+                )
             }
             Spacer(Modifier.height(12.dp))
             SecondaryButton(if (importing) "Wird importiert …" else "Eigene .task-Datei wählen", Modifier.fillMaxWidth(), enabled = !importing) {
@@ -859,7 +970,13 @@ private fun openAppSettings(ctx: Context) {
     )
 }
 
-private fun displayName(ctx: Context, uri: Uri): String? = runCatching {
+fun sizeLabel(bytes: Long): String = when {
+    bytes >= 1_000_000_000L -> "%.1f GB".format(bytes / 1e9)
+    bytes >= 1_000_000L -> "%.0f MB".format(bytes / 1e6)
+    else -> "%.0f KB".format(bytes / 1e3)
+}
+
+fun displayName(ctx: Context, uri: Uri): String? = runCatching {
     ctx.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
         if (c.moveToFirst()) c.getString(0) else null
     }
