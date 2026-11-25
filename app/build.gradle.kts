@@ -16,6 +16,7 @@ android {
         targetSdk = 35
         versionCode = buildNumber
         versionName = "1.0.$buildNumber"
+        ndk { abiFilters += listOf("arm64-v8a") }
     }
 
     signingConfigs {
