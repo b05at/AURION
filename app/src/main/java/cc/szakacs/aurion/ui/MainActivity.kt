@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Forum
+import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.Psychology
 import androidx.compose.material.icons.rounded.Tune
@@ -59,6 +60,7 @@ import cc.szakacs.aurion.ui.theme.AurionTheme
 class MainActivity : ComponentActivity() {
 
     private val vm: AssistantViewModel by viewModels()
+    private val dictVm: DictationViewModel by viewModels()
     private val resumeTick = mutableIntStateOf(0)
     private var requestedTab by mutableStateOf<String?>(null)
 
@@ -69,6 +71,7 @@ class MainActivity : ComponentActivity() {
         )
         super.onCreate(savedInstanceState)
         requestedTab = intent?.getStringExtra("tab")
+        cc.szakacs.aurion.speech.Packs.resume(this)
         // Beim Öffnen der App mit leerem Gespräch starten
         if (savedInstanceState == null) {
             vm.newConversation()
@@ -77,7 +80,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             AurionTheme {
                 androidx.compose.runtime.CompositionLocalProvider(LocalResumeTick provides resumeTick.intValue) {
-                    AurionMain(vm, resumeTick.intValue, requestedTab) { requestedTab = null }
+                    AurionMain(vm, dictVm, resumeTick.intValue, requestedTab) { requestedTab = null }
                 }
             }
         }
@@ -92,6 +95,12 @@ class MainActivity : ComponentActivity() {
     /** Von anderen Apps geteilte Texte/Bilder oder markierter Text ("Frag Aurion") */
     private fun handleShare(intent: Intent?) {
         intent ?: return
+        if (intent.getBooleanExtra("startDictation", false)) {
+            requestedTab = "dictate"
+            intent.removeExtra("startDictation")
+            window.decorView.postDelayed({ if (!dictVm.state.value.recording) dictVm.start() }, 900)
+            return
+        }
         val text = when (intent.action) {
             Intent.ACTION_SEND -> intent.getStringExtra(Intent.EXTRA_TEXT)
             Intent.ACTION_PROCESS_TEXT -> intent.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)?.toString()
@@ -101,6 +110,11 @@ class MainActivity : ComponentActivity() {
             if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(Intent.EXTRA_STREAM, android.net.Uri::class.java)
             else @Suppress("DEPRECATION") intent.getParcelableExtra<android.net.Uri>(Intent.EXTRA_STREAM)
         } else null
+        if (streamUri != null && (intent.type?.startsWith("audio/") == true || intent.type == "application/ogg" || intent.type?.startsWith("video/") == true)) {
+            requestedTab = "dictate"
+            dictVm.transcribeFile(streamUri)
+            return
+        }
         if (streamUri != null && intent.type?.startsWith("image/") != true) {
             requestedTab = "chat"
             vm.attach(streamUri)
@@ -118,7 +132,7 @@ class MainActivity : ComponentActivity() {
                     d.setTargetSampleSize(2)
                 }
                 requestedTab = "chat"
-                vm.analyzeImage(bmp)
+                vm.analyzeImage(bmp, autoExplain = false, title = "Geteiltes Bild")
             }
             !text.isNullOrBlank() -> {
                 requestedTab = "chat"
@@ -148,11 +162,11 @@ class MainActivity : ComponentActivity() {
 }
 
 private enum class Tab(val key: String, val label: String) {
-    CHAT("chat", "Aurion"), REMINDERS("reminders", "Erinnerungen"), MEMORY("memory", "Gedächtnis"), SETTINGS("settings", "Einstellungen")
+    CHAT("chat", "Aurion"), DICTATE("dictate", "Diktat"), REMINDERS("reminders", "Erinnerungen"), SETTINGS("settings", "Einstellungen")
 }
 
 @Composable
-private fun AurionMain(vm: AssistantViewModel, tick: Int, requestedTab: String?, consumeTab: () -> Unit) {
+private fun AurionMain(vm: AssistantViewModel, dictVm: DictationViewModel, tick: Int, requestedTab: String?, consumeTab: () -> Unit) {
     var tab by rememberSaveable { mutableStateOf(Tab.CHAT) }
     LaunchedEffect(requestedTab) {
         requestedTab?.let { key -> Tab.entries.firstOrNull { it.key == key }?.let { tab = it } }
@@ -185,8 +199,8 @@ private fun AurionMain(vm: AssistantViewModel, tick: Int, requestedTab: String?,
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when (tab) {
                     Tab.CHAT -> ChatScreen(vm)
+                    Tab.DICTATE -> DictationScreen(dictVm)
                     Tab.REMINDERS -> RemindersScreen(vm)
-                    Tab.MEMORY -> MemoryScreen()
                     Tab.SETTINGS -> SettingsScreen(tick)
                 }
             }
@@ -199,8 +213,8 @@ private fun AurionMain(vm: AssistantViewModel, tick: Int, requestedTab: String?,
                             Icon(
                                 when (t) {
                                     Tab.CHAT -> Icons.Rounded.Forum
+                                    Tab.DICTATE -> Icons.Rounded.Mic
                                     Tab.REMINDERS -> Icons.Rounded.NotificationsActive
-                                    Tab.MEMORY -> Icons.Rounded.Psychology
                                     Tab.SETTINGS -> Icons.Rounded.Tune
                                 }, t.label
                             )

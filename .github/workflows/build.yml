@@ -21,6 +21,13 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      - name: sherpa-onnx (Stimmen & Whisper) laden
+        run: |
+          mkdir -p app/libs
+          curl -sSL --retry 3 -o app/libs/sherpa-onnx-1.13.7.aar \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.7/sherpa-onnx-1.13.7.aar
+          ls -la app/libs
+
       - name: Build APK
         run: |
           chmod +x gradlew

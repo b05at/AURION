@@ -610,6 +610,17 @@ class Brain(private val ctx: Context) {
     // ================= Geräteaktionen =================
 
     private suspend fun deviceAction(text: String, l: String, lang: String): Reply? {
+        // Diktat / Transkription
+        if (Regex("\\b(diktat\\w*|diktier\\w*|transkri\\w*|mitschreib\\w*|dictat\\w*|transcri\\w*|take a note|notiz aufnehmen|sprachnotiz)\\b").containsMatchIn(l)) {
+            runCatching {
+                ctx.startActivity(
+                    android.content.Intent(ctx, cc.szakacs.aurion.ui.MainActivity::class.java)
+                        .putExtra("startDictation", true)
+                        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                )
+            }
+            return Reply(t(lang, "Diktat startet.", "Starting dictation."), lang)
+        }
         // Taschenlampe
         Regex("(taschenlampe|flashlight|torch)").find(l)?.let {
             val off = Regex("\\b(aus|ab|off|ausschalten|abdrehen)\\b").containsMatchIn(l)

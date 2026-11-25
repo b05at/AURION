@@ -80,4 +80,9 @@ dependencies {
     // On-Device Texterkennung + Objekterkennung (gebündelte Modelle, offline)
     implementation("com.google.mlkit:text-recognition:16.0.1")
     implementation("com.google.mlkit:image-labeling:17.0.9")
+
+    // Natürliche Offline-Stimmen (Piper/VITS) + Whisper-Spracherkennung
+    // Die AAR wird im CI-Build von den sherpa-onnx-Releases geladen (siehe .github/workflows/build.yml)
+    implementation(files("libs/sherpa-onnx-1.13.7.aar"))
+    implementation("org.apache.commons:commons-compress:1.27.1")
 }

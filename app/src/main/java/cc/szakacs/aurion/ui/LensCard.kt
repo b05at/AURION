@@ -86,6 +86,30 @@ fun LensCard(lens: LensState, vm: AssistantViewModel, modifier: Modifier = Modif
             IconButton(onClick = onClose) { Icon(Icons.Rounded.Close, "Schließen", tint = AurionColors.TextMid) }
         }
 
+        // Erst fragen, was mit dem Anhang passieren soll
+        if (lens.askWhat && !lens.analyzing && lens.answer == null && !lens.answering) {
+            Spacer(Modifier.size(12.dp))
+            Text("Was soll ich damit machen?", color = AurionColors.TextHigh, style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Schreib oder sag es mir – oder wähle einen Vorschlag.",
+                color = AurionColors.TextMid, style = MaterialTheme.typography.bodyMedium
+            )
+            Spacer(Modifier.size(8.dp))
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                val isDoc = lens.title != null && lens.image == null || (r?.text?.length ?: 0) > 300
+                if (isDoc) {
+                    ActionChip("Zusammenfassen") { vm.submit("Fasse das zusammen: Worum geht es, was sind die wichtigsten Punkte, gibt es Fristen, Beträge oder To-dos?") }
+                    ActionChip("Fristen & To-dos") { vm.submit("Welche Fristen, Termine, Beträge und To-dos stehen darin? Liste sie auf.") }
+                    ActionChip("Einfach erklären") { vm.submit("Erkläre den Inhalt in einfachen Worten.") }
+                    ActionChip("Antwort formulieren") { vm.submit("Formuliere eine passende, höfliche Antwort darauf.") }
+                } else {
+                    ActionChip("Was ist das?") { vm.submit("Was ist auf dem Bild zu sehen? Beschreibe es.") }
+                    ActionChip("Text auslesen") { vm.submit("Gib den erkannten Text sauber formatiert wieder.") }
+                }
+                ActionChip("Übersetzen") { vm.submit("Übersetze den Inhalt ins Deutsche (falls er Deutsch ist: ins Englische).") }
+            }
+        }
+
         // Aurions Erklärung (live)
         if (lens.answering || lens.answer != null) {
             Spacer(Modifier.size(10.dp))
@@ -105,7 +129,7 @@ fun LensCard(lens: LensState, vm: AssistantViewModel, modifier: Modifier = Modif
         }
 
         // Aktionen
-        if (r != null) {
+        if (r != null && !lens.askWhat) {
             Spacer(Modifier.size(12.dp))
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 r.entities.forEach { e ->

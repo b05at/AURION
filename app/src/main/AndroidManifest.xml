@@ -21,6 +21,8 @@
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>
+        <package android:name="com.google.android.apps.tasks" />
+        <package android:name="com.google.android.keep" />
         <!-- Apps per Sprache öffnen -->
         <intent>
             <action android:name="android.intent.action.MAIN" />
@@ -66,6 +68,13 @@
                 <data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
                 <data android:mimeType="application/vnd.oasis.opendocument.text" />
                 <data android:mimeType="text/*" />
+            </intent-filter>
+            <!-- Sprachnachrichten / Audiodateien transkribieren -->
+            <intent-filter android:label="Mit Aurion transkribieren">
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="audio/*" />
+                <data android:mimeType="application/ogg" />
             </intent-filter>
             <intent-filter android:label="Frag Aurion">
                 <action android:name="android.intent.action.PROCESS_TEXT" />

@@ -118,6 +118,7 @@ class SpeechInput(private val ctx: Context) {
 
 /** Sprachausgabe mit automatischer Wahl Deutsch/Englisch und wählbarer Stimme. */
 class Speaker(ctx: Context) {
+    private val appCtx = ctx.applicationContext
     private val settings = cc.szakacs.aurion.data.Settings.get(ctx)
     private var onDone: (() -> Unit)? = null
     private val _ready = kotlinx.coroutines.flow.MutableStateFlow(false)
@@ -145,8 +146,17 @@ class Speaker(ctx: Context) {
 
     fun speak(text: String, lang: String, voiceName: String? = null, done: (() -> Unit)? = null) {
         onDone = done
-        if (!_ready.value) { done?.invoke(); return }
         val wanted = voiceName ?: if (lang == "en") settings.voiceEn else settings.voiceDe
+        // Natürliche neuronale Stimme (Piper, offline)
+        if (wanted?.startsWith(NEURAL) == true) {
+            val id = wanted.removePrefix(NEURAL)
+            if (cc.szakacs.aurion.speech.Packs.isInstalled(appCtx, id)) {
+                tts.stop()
+                cc.szakacs.aurion.speech.NeuralTts.speak(appCtx, id, text, settings.speechRate) { onDone?.invoke() }
+                return
+            }
+        }
+        if (!_ready.value) { done?.invoke(); return }
         val voice = wanted?.let { n -> runCatching { tts.voices?.firstOrNull { it.name == n } }.getOrNull() }
         if (voice != null) {
             tts.voice = voice
@@ -162,10 +172,17 @@ class Speaker(ctx: Context) {
     fun stop() {
         onDone = null
         tts.stop()
+        cc.szakacs.aurion.speech.NeuralTts.stop()
     }
 
     fun shutdown() {
         tts.stop()
+        cc.szakacs.aurion.speech.NeuralTts.stop()
         tts.shutdown()
+    }
+
+    companion object {
+        /** Präfix für neuronale Stimmen in den Einstellungen */
+        const val NEURAL = "piper:"
     }
 }

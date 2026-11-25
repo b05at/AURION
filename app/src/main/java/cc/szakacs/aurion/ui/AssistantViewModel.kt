@@ -34,6 +34,8 @@ data class LensState(
     val progress: String? = null,
     /** Abschnittsweise Zusammenfassung langer Dokumente */
     val digest: String? = null,
+    /** Aurion wartet darauf, dass der Nutzer sagt, was er mit dem Anhang tun möchte */
+    val askWhat: Boolean = false,
 )
 
 data class AssistUiState(
@@ -147,7 +149,10 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = _state.value.copy(orb = OrbState.THINKING, transcript = text, level = 0f, hint = null, streaming = null)
         viewModelScope.launch {
             val lensActive = _state.value.lens?.result != null
-            if (lensActive) _state.value = _state.value.copy(lens = _state.value.lens?.copy(answering = true, answer = null))
+            if (lensActive) _state.value = _state.value.copy(lens = _state.value.lens?.copy(answering = true, answer = null, askWhat = false))
+            if (lensActive && Regex("zusammenfass|fasse|überblick|worum geht|summar|overview|wichtigsten|to-?dos|fristen", RegexOption.IGNORE_CASE).containsMatchIn(text)) {
+                ensureDigest()
+            }
             val reply = brain.handle(text, screenProvider(), spoken) { partial ->
                 if (lensActive) _state.value = _state.value.copy(lens = _state.value.lens?.copy(answer = partial))
                 else _state.value = _state.value.copy(streaming = partial)
@@ -183,9 +188,9 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
     // ================= Bildschirm-Lupe =================
 
     /** Eingekreister Bereich oder geteiltes Bild analysieren */
-    fun analyzeImage(bitmap: android.graphics.Bitmap, autoExplain: Boolean = true) {
+    fun analyzeImage(bitmap: android.graphics.Bitmap, autoExplain: Boolean = true, title: String? = null) {
         speech.stop(); speaker.stop()
-        _state.value = _state.value.copy(lens = LensState(bitmap), reply = null, transcript = "", orb = OrbState.THINKING)
+        _state.value = _state.value.copy(lens = LensState(bitmap, title = title, askWhat = !autoExplain), reply = null, transcript = "", orb = OrbState.THINKING)
         viewModelScope.launch {
             val r = Vision.analyze(bitmap)
             _state.value = _state.value.copy(lens = _state.value.lens?.copy(analyzing = false, result = r), orb = OrbState.IDLE)
@@ -203,8 +208,7 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
     /** Geteilten Text als Kontext übernehmen */
     fun analyzeText(text: String) {
         val r = cc.szakacs.aurion.vision.VisionResult(text, emptyList(), Vision.extractEntities(text))
-        _state.value = _state.value.copy(lens = LensState(null, analyzing = false, result = r), reply = null)
-        if (LlmEngine.get(ctx).isAvailable) submit(if (text.length > 400) "Fasse das kurz zusammen." else "Erkläre kurz, worum es hier geht.", spoken = false)
+        _state.value = _state.value.copy(lens = LensState(null, analyzing = false, result = r, askWhat = true), reply = null)
     }
 
     // ================= Anhänge =================
@@ -220,7 +224,7 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
                 when (val a = cc.szakacs.aurion.vision.DocumentReader.read(ctx, uri) { p ->
                     _state.value = _state.value.copy(lens = _state.value.lens?.copy(progress = p))
                 }) {
-                    is cc.szakacs.aurion.vision.Attachment.Image -> analyzeImage(a.bitmap)
+                    is cc.szakacs.aurion.vision.Attachment.Image -> analyzeImage(a.bitmap, autoExplain = false, title = a.name)
                     is cc.szakacs.aurion.vision.Attachment.Document -> analyzeDocument(a.name, a.text, a.preview, a.pages)
                 }
             } catch (e: Exception) {
@@ -229,7 +233,7 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun attachPhoto(bitmap: android.graphics.Bitmap) = analyzeImage(bitmap)
+    fun attachPhoto(bitmap: android.graphics.Bitmap) = analyzeImage(bitmap, autoExplain = false, title = "Foto")
 
     private suspend fun analyzeDocument(name: String, text: String, preview: android.graphics.Bitmap?, pages: Int) {
         if (text.isBlank()) {
@@ -240,27 +244,29 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = _state.value.copy(
             lens = LensState(preview, analyzing = false, result = r, title = name, progress = null)
         )
+        // Nicht automatisch loslegen – der Nutzer sagt, was er damit machen möchte
+    }
+
+    /** Lange Dokumente bei Bedarf Abschnitt für Abschnitt zusammenfassen (für Gesamtüberblicke) */
+    private suspend fun ensureDigest() {
+        val lens = _state.value.lens ?: return
+        val text = lens.result?.text ?: return
+        if (lens.digest != null || lens.title == null || text.length <= 3500) return
         val llm = LlmEngine.get(ctx)
         if (!llm.isAvailable) return
-        // Lange Dokumente: erst Abschnitt für Abschnitt zusammenfassen
-        if (text.length > 3500) {
-            val chunks = text.chunked(2800).take(8)
-            val parts = ArrayList<String>()
-            chunks.forEachIndexed { i, c ->
-                _state.value = _state.value.copy(lens = _state.value.lens?.copy(progress = "Lese Abschnitt ${i + 1} von ${chunks.size} …", answering = true))
-                val sum = runCatching {
-                    llm.chat(
-                        "Fasse den folgenden Abschnitt eines Dokuments in 3–6 knappen Stichpunkten auf Deutsch zusammen. Nur die Stichpunkte.",
-                        emptyList(), c, temperature = 0.2f
-                    )
-                }.getOrDefault("")
-                if (sum.isNotBlank()) parts += "Abschnitt ${i + 1}:\n$sum"
-            }
-            _state.value = _state.value.copy(lens = _state.value.lens?.copy(digest = parts.joinToString("\n\n"), progress = null))
+        val chunks = text.chunked(2800).take(8)
+        val parts = ArrayList<String>()
+        chunks.forEachIndexed { i, c ->
+            _state.value = _state.value.copy(lens = _state.value.lens?.copy(progress = "Lese Abschnitt ${i + 1} von ${chunks.size} …", answering = true))
+            val sum = runCatching {
+                llm.chat(
+                    "Fasse den folgenden Abschnitt eines Dokuments in 3–6 knappen Stichpunkten auf Deutsch zusammen. Nur die Stichpunkte.",
+                    emptyList(), c, temperature = 0.2f
+                )
+            }.getOrDefault("")
+            if (sum.isNotBlank()) parts += "Abschnitt ${i + 1}:\n$sum"
         }
-        val q = if (pages > 0 || text.length > 600) "Fasse das Dokument zusammen: Worum geht es, was sind die wichtigsten Punkte und gibt es Fristen, Beträge oder To-dos?"
-        else "Worum geht es in diesem Text? Fasse kurz zusammen."
-        submit(q, spoken = false)
+        _state.value = _state.value.copy(lens = _state.value.lens?.copy(digest = parts.joinToString("\n\n"), progress = null))
     }
 
     /** Artikel in Bring! abhaken (aus der Einkaufskarte) */

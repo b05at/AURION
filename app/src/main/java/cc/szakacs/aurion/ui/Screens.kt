@@ -40,6 +40,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.PhotoCamera
@@ -81,6 +82,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import cc.szakacs.aurion.BuildConfig
 import cc.szakacs.aurion.bring.BringClient
 import cc.szakacs.aurion.bring.BringList
@@ -96,6 +98,9 @@ import cc.szakacs.aurion.ui.theme.AurionColors
 import cc.szakacs.aurion.update.UpdateInfo
 import cc.szakacs.aurion.update.Updater
 import cc.szakacs.aurion.voice.Speaker
+import cc.szakacs.aurion.speech.Pack
+import cc.szakacs.aurion.speech.PackState
+import cc.szakacs.aurion.speech.Packs
 import cc.szakacs.aurion.weather.WeatherService
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -254,7 +259,12 @@ fun ChatScreen(vm: AssistantViewModel) {
                 TextField(
                     value = input,
                     onValueChange = { input = it },
-                    placeholder = { Text("Nachricht an Aurion", color = AurionColors.TextLow) },
+                    placeholder = {
+                        Text(
+                            if (st.lens?.askWhat == true) "Was soll ich damit machen?" else "Nachricht an Aurion",
+                            color = AurionColors.TextLow
+                        )
+                    },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                     keyboardActions = KeyboardActions(onSend = { vm.submit(input); input = "" }),
                     colors = TextFieldDefaults.colors(
@@ -387,46 +397,79 @@ fun RemindersScreen(vm: AssistantViewModel) {
 // Gedächtnis
 // ======================================================================
 
+/** Gedächtnis – jetzt als Bereich in den Einstellungen */
 @Composable
-fun MemoryScreen() {
+private fun MemorySection() {
     val ctx = LocalContext.current
     val store = Store.get(ctx)
     val mem by store.memory.collectAsState()
     var input by remember { mutableStateOf("") }
+    var expanded by remember { mutableStateOf(false) }
 
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp)) {
-        item {
-            Text(
-                "Was Aurion sich merkt, fließt in alle Antworten ein – bleibt aber nur auf diesem Gerät.",
-                color = AurionColors.TextMid, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(6.dp)
-            )
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = input, onValueChange = { input = it },
-                modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("Neuer Eintrag, z. B. „Ich trinke Kaffee schwarz“") },
-                singleLine = true,
-                shape = RoundedCornerShape(18.dp),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { if (input.isNotBlank()) { store.addMemory(input); input = "" } }),
-                colors = fieldColors()
-            )
-        }
-        item { SectionTitle("Gemerkt (${mem.size})") }
-        items(mem.asReversed(), key = { it.id }) { f ->
-            GlassCard(Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(f.text, color = AurionColors.TextHigh, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+    GlassCard(Modifier.fillMaxWidth()) {
+        Text(
+            "Was Aurion sich merkt, fließt in alle Antworten ein – bleibt aber nur auf diesem Gerät. Neu per Sprache: „Merk dir, dass …“",
+            color = AurionColors.TextMid, style = MaterialTheme.typography.bodyMedium
+        )
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(
+            value = input, onValueChange = { input = it },
+            modifier = Modifier.fillMaxWidth(),
+            placeholder = { Text("Neuer Eintrag, z. B. „Ich trinke Kaffee schwarz“") },
+            singleLine = true,
+            shape = RoundedCornerShape(14.dp),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { if (input.isNotBlank()) { store.addMemory(input); input = "" } }),
+            colors = fieldColors()
+        )
+        if (mem.isEmpty()) {
+            Text("Noch nichts gemerkt.", color = AurionColors.TextLow, modifier = Modifier.padding(top = 10.dp))
+        } else {
+            Text("Gemerkt (${mem.size})", color = AurionColors.TextHigh, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 12.dp))
+            val shown = if (expanded) mem.asReversed() else mem.asReversed().take(5)
+            shown.forEach { f ->
+                Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(f.text, color = AurionColors.TextHigh, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                     IconButton(onClick = { store.deleteMemory(f.id) }) {
                         Icon(Icons.Rounded.DeleteOutline, "Löschen", tint = AurionColors.TextLow)
                     }
                 }
             }
+            if (mem.size > 5) {
+                Text(
+                    if (expanded) "Weniger anzeigen" else "Alle ${mem.size} anzeigen",
+                    color = AurionColors.Cyan, modifier = Modifier.clickable { expanded = !expanded }.padding(vertical = 6.dp)
+                )
+            }
         }
-        item {
-            Spacer(Modifier.height(12.dp))
-            SecondaryButton("Gesprächsverlauf löschen", Modifier.fillMaxWidth()) { store.clearChat() }
+        Spacer(Modifier.height(8.dp))
+        SecondaryButton("Gesprächsverlauf löschen", Modifier.fillMaxWidth()) { store.clearChat() }
+    }
+}
+
+/** Sicherung aller Daten in eine Datei – schützt bei Neuinstallation oder Handywechsel */
+@Composable
+private fun BackupSection() {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var msg by remember { mutableStateOf<String?>(null) }
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null) scope.launch { msg = runCatching { cc.szakacs.aurion.data.Backup.export(ctx, uri) }.fold({ "Gesichert ✓" }, { "Fehler: ${it.message}" }) }
+    }
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) scope.launch { msg = runCatching { cc.szakacs.aurion.data.Backup.import(ctx, uri) }.fold({ it }, { "Fehler: ${it.message}" }) }
+    }
+    GlassCard(Modifier.fillMaxWidth()) {
+        Text(
+            "Erinnerungen, Gedächtnis, Transkripte und Einstellungen bleiben bei Updates automatisch erhalten. Für eine Neuinstallation oder ein neues Handy kannst du hier eine Sicherung anlegen.",
+            color = AurionColors.TextMid, style = MaterialTheme.typography.bodyMedium
+        )
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SecondaryButton("Sichern", Modifier.weight(1f)) { exportLauncher.launch("aurion-sicherung.json") }
+            SecondaryButton("Wiederherstellen", Modifier.weight(1f)) { importLauncher.launch(arrayOf("application/json", "*/*")) }
         }
+        msg?.let { Text(it, color = AurionColors.Cyan, modifier = Modifier.padding(top = 8.dp)) }
     }
 }
 
@@ -476,6 +519,10 @@ fun SettingsScreen(tick: Int) {
             )
         }
 
+        // ---------- Gedächtnis ----------
+        SectionTitle("Gedächtnis")
+        MemorySection()
+
         // ---------- Sprache ----------
         SectionTitle("Sprache")
         GlassCard(Modifier.fillMaxWidth()) {
@@ -504,6 +551,10 @@ fun SettingsScreen(tick: Int) {
         SectionTitle("Stimme")
         VoiceSection()
 
+        // ---------- Spracherkennung (Whisper) ----------
+        SectionTitle("Spracherkennung (Diktat)")
+        WhisperSection()
+
         // ---------- Wetter ----------
         SectionTitle("Wetter")
         WeatherSection(tick)
@@ -515,6 +566,10 @@ fun SettingsScreen(tick: Int) {
         // ---------- Bring! ----------
         SectionTitle("Bring! Einkaufsliste")
         BringSection()
+
+        // ---------- Sicherung ----------
+        SectionTitle("Daten sichern")
+        BackupSection()
 
         // ---------- Update ----------
         SectionTitle("App")
@@ -578,6 +633,35 @@ private fun VoiceSection() {
                 )
             }
         }
+        // ---- Natürliche neuronale Stimmen ----
+        val packStates by Packs.states.collectAsState()
+        val selectedNow = if (lang == "en") selEn else selDe
+        Text(
+            "✨ Natürliche Stimmen (neuronal, offline)",
+            style = MaterialTheme.typography.titleMedium, color = AurionColors.TextHigh, modifier = Modifier.padding(top = 14.dp)
+        )
+        Text(
+            "Klingen deutlich menschlicher als die Systemstimmen. Einmal laden, danach komplett offline.",
+            style = MaterialTheme.typography.bodyMedium, color = AurionColors.TextLow, modifier = Modifier.padding(bottom = 4.dp)
+        )
+        Packs.voices.filter { it.lang == lang }.forEach { p ->
+            val id = Speaker.NEURAL + p.id
+            PackRow(
+                pack = p,
+                state = packStates[p.id] ?: Packs.state(ctx, p.id),
+                selected = selectedNow == id,
+                onSelect = { choose(id) },
+                onDelete = {
+                    Packs.delete(ctx, p.id)
+                    if (selDe == id) { selDe = null; settings.voiceDe = null }
+                    if (selEn == id) { selEn = null; settings.voiceEn = null }
+                },
+            )
+        }
+        Text(
+            "Android-Stimmen",
+            style = MaterialTheme.typography.titleMedium, color = AurionColors.TextHigh, modifier = Modifier.padding(top = 16.dp)
+        )
         if (!ready) {
             Text("Stimmen werden geladen …", color = AurionColors.TextMid, modifier = Modifier.padding(top = 10.dp))
         } else {
@@ -697,6 +781,77 @@ private fun WeatherSection(tick: Int) {
             }
         }
         msg?.let { Text(it, color = AurionColors.Amber, modifier = Modifier.padding(top = 6.dp)) }
+    }
+}
+
+/** Zeile für ein herunterladbares Sprachpaket (Stimme oder Whisper) */
+@Composable
+fun PackRow(pack: Pack, state: PackState, selected: Boolean = false, onSelect: (() -> Unit)? = null, onDelete: () -> Unit) {
+    val ctx = LocalContext.current
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 6.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (selected) Color(0x262F7BFF) else Color.Transparent)
+            .then(if (state is PackState.Ready && onSelect != null) Modifier.clickable { onSelect() } else Modifier)
+            .padding(horizontal = 8.dp, vertical = 8.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (onSelect != null) {
+                Text(
+                    if (selected) "●" else "○",
+                    color = if (selected) AurionColors.Cyan else if (state is PackState.Ready) AurionColors.TextMid else AurionColors.TextLow
+                )
+                Spacer(Modifier.size(12.dp))
+            }
+            Column(Modifier.weight(1f)) {
+                Text(pack.title, color = AurionColors.TextHigh, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    if (state is PackState.Ready) "${pack.description} · ${sizeLabel(Packs.sizeOnDisk(ctx, pack.id))}" else "${pack.description} · ${pack.sizeLabel}",
+                    color = AurionColors.TextMid, style = MaterialTheme.typography.bodyMedium
+                )
+            }
+            when (state) {
+                is PackState.Ready -> {
+                    if (onSelect != null) IconButton(onClick = { onSelect() }) {
+                        Icon(Icons.Rounded.PlayArrow, "Anhören", tint = AurionColors.Cyan)
+                    }
+                    IconButton(onClick = onDelete) { Icon(Icons.Rounded.DeleteOutline, "Löschen", tint = AurionColors.TextLow) }
+                }
+                is PackState.Downloading, PackState.Extracting -> IconButton(onClick = { Packs.cancel(ctx, pack.id) }) {
+                    Icon(Icons.Rounded.Close, "Abbrechen", tint = AurionColors.TextMid)
+                }
+                else -> SecondaryButton("Laden") { Packs.download(ctx, pack) }
+            }
+        }
+        when (state) {
+            is PackState.Downloading -> LinearProgressIndicator(
+                progress = { state.progress }, color = AurionColors.Cyan,
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
+            )
+            PackState.Extracting -> {
+                LinearProgressIndicator(color = AurionColors.Cyan, modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
+                Text("Wird installiert …", color = AurionColors.TextMid, fontSize = 12.sp)
+            }
+            is PackState.Failed -> Text(state.message, color = AurionColors.Amber, fontSize = 12.sp)
+            else -> Unit
+        }
+    }
+}
+
+@Composable
+private fun WhisperSection() {
+    val ctx = LocalContext.current
+    val packStates by Packs.states.collectAsState()
+    GlassCard(Modifier.fillMaxWidth()) {
+        Text(
+            "Whisper transkribiert Diktate und Sprachnachrichten sehr genau – komplett offline, in Deutsch, Englisch und vielen weiteren Sprachen. Ohne Whisper nutzt das Diktat die Live-Erkennung von Android.",
+            style = MaterialTheme.typography.bodyMedium, color = AurionColors.TextMid
+        )
+        Packs.whisper.forEach { p ->
+            PackRow(pack = p, state = packStates[p.id] ?: Packs.state(ctx, p.id), onDelete = { Packs.delete(ctx, p.id) })
+        }
     }
 }
 

@@ -60,6 +60,19 @@ data class ChatMessage(
     }
 }
 
+data class Transcript(
+    val id: String = UUID.randomUUID().toString(),
+    val text: String,
+    val time: Long = System.currentTimeMillis(),
+    val source: String = "Diktat",
+) {
+    fun toJson() = JSONObject().put("id", id).put("text", text).put("time", time).put("source", source)
+
+    companion object {
+        fun fromJson(o: JSONObject) = Transcript(o.getString("id"), o.getString("text"), o.optLong("time"), o.optString("source", "Diktat"))
+    }
+}
+
 /**
  * Einfacher, persistenter Speicher (JSON-Dateien im App-Verzeichnis).
  * Hält Erinnerungen, Gedächtnis-Einträge und den Gesprächsverlauf.
@@ -69,6 +82,22 @@ class Store private constructor(private val dir: File) {
     private val remindersFile = File(dir, "reminders.json")
     private val memoryFile = File(dir, "memory.json")
     private val chatFile = File(dir, "chat.json")
+    private val transcriptFile = File(dir, "transcripts.json")
+
+    private val _transcripts = MutableStateFlow(loadList(transcriptFile) { Transcript.fromJson(it) })
+    val transcripts: StateFlow<List<Transcript>> = _transcripts
+
+    @Synchronized
+    fun saveTranscript(t: Transcript) {
+        _transcripts.value = (listOf(t) + _transcripts.value.filterNot { it.id == t.id }).take(100)
+        saveList(transcriptFile, _transcripts.value) { it.toJson() }
+    }
+
+    @Synchronized
+    fun deleteTranscript(id: String) {
+        _transcripts.value = _transcripts.value.filterNot { it.id == id }
+        saveList(transcriptFile, _transcripts.value) { it.toJson() }
+    }
 
     private val _reminders = MutableStateFlow(loadList(remindersFile) { Reminder.fromJson(it) })
     val reminders: StateFlow<List<Reminder>> = _reminders
