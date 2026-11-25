@@ -8,12 +8,12 @@ import com.google.mediapipe.tasks.genai.llminference.GraphOptions
 import com.google.mediapipe.tasks.genai.llminference.LlmInference
 import com.google.mediapipe.tasks.genai.llminference.LlmInferenceSession
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
-import kotlin.coroutines.resume
 
 data class Turn(val user: Boolean, val text: String)
 
@@ -68,35 +68,62 @@ class LlmEngine private constructor(private val ctx: Context) {
         temperature: Float = 0.6f,
         image: Bitmap? = null,
         onPartial: ((String) -> Unit)? = null,
-    ): String = withContext(Dispatchers.IO) {
+    ): String = withContext(Dispatchers.IO + NonCancellable) {
+        // NonCancellable: eine laufende Generierung wird immer sauber zu Ende geführt,
+        // auch wenn das Overlay geschlossen wird – sonst blockiert MediaPipe die nächste Anfrage.
         mutex.withLock {
-            val engine = ensureLoaded()
-            val prompt = buildPrompt(system, history, user)
-            val useImage = image != null && supportsVision
-            val ob = LlmInferenceSession.LlmInferenceSessionOptions.builder()
-                .setTopK(40)
-                .setTemperature(temperature)
-            if (useImage) ob.setGraphOptions(GraphOptions.builder().setEnableVisionModality(true).build())
-            val session = LlmInferenceSession.createFromOptions(engine, ob.build())
-            try {
-                session.addQueryChunk(prompt)
-                if (useImage) session.addImage(BitmapImageBuilder(scaled(image!!)).build())
-                if (onPartial == null) {
-                    clean(session.generateResponse())
-                } else {
-                    val sb = StringBuilder()
-                    val full = suspendCancellableCoroutine<String> { cont ->
-                        session.generateResponseAsync { partial, done ->
-                            if (partial != null) sb.append(partial)
-                            runCatching { onPartial(clean(sb.toString())) }
-                            if (done && cont.isActive) cont.resume(sb.toString())
-                        }
-                    }
-                    clean(full)
+            var attempt = 0
+            while (true) {
+                try {
+                    return@withLock generate(system, history, user, temperature, image, onPartial)
+                } catch (e: Exception) {
+                    val busy = e.message?.contains("still processing", ignoreCase = true) == true ||
+                        e.message?.contains("done=true", ignoreCase = true) == true
+                    if (!busy || attempt >= 12) throw e
+                    attempt++
+                    // Kurz warten; hängt es weiter, Modell neu laden
+                    if (attempt == 6) release()
+                    delay(350L * attempt.coerceAtMost(4))
                 }
-            } finally {
-                session.close()
             }
+            @Suppress("UNREACHABLE_CODE")
+            ""
+        }
+    }
+
+    private fun generate(
+        system: String,
+        history: List<Turn>,
+        user: String,
+        temperature: Float,
+        image: Bitmap?,
+        onPartial: ((String) -> Unit)?,
+    ): String {
+        val engine = ensureLoaded()
+        val prompt = buildPrompt(system, history, user)
+        val useImage = image != null && supportsVision
+        val ob = LlmInferenceSession.LlmInferenceSessionOptions.builder()
+            .setTopK(40)
+            .setTemperature(temperature)
+        if (useImage) ob.setGraphOptions(GraphOptions.builder().setEnableVisionModality(true).build())
+        val session = LlmInferenceSession.createFromOptions(engine, ob.build())
+        try {
+            session.addQueryChunk(prompt)
+            if (useImage) session.addImage(BitmapImageBuilder(scaled(image!!)).build())
+            return if (onPartial == null) {
+                clean(session.generateResponse())
+            } else {
+                val sb = StringBuilder()
+                val future = session.generateResponseAsync { partial, _ ->
+                    if (partial != null) synchronized(sb) { sb.append(partial) }
+                    runCatching { onPartial(clean(synchronized(sb) { sb.toString() })) }
+                }
+                // Blockierend warten, bis MediaPipe die Generierung vollständig abgeschlossen hat
+                val result = runCatching { future.get() }.getOrNull()
+                clean(synchronized(sb) { sb.toString() }.ifBlank { result.orEmpty() })
+            }
+        } finally {
+            runCatching { session.close() }
         }
     }
 
