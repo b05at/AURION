@@ -52,7 +52,7 @@ data class AurionTimer(
  * mit Pause / +1 Min / Stopp. Am Ende klingelt ein Alarm, bis er gestoppt wird.
  */
 object Timers {
-    private const val CH_LIVE = "aurion_timer_live"
+    private const val CH_LIVE = "aurion_timer_live2"
     private const val CH_ALARM = "aurion_timer_alarm"
     const val ACTION_FINISH = "cc.szakacs.aurion.TIMER_FINISH"
     const val ACTION_PAUSE = "cc.szakacs.aurion.TIMER_PAUSE"
@@ -83,9 +83,13 @@ object Timers {
 
     fun createChannels(ctx: Context) {
         val nm = ctx.getSystemService(NotificationManager::class.java)
-        nm.createNotificationChannel(NotificationChannel(CH_LIVE, "Laufende Timer", NotificationManager.IMPORTANCE_LOW).apply {
-            description = "Live-Anzeige laufender Timer"
+        nm.deleteNotificationChannel("aurion_timer_live")
+        nm.createNotificationChannel(NotificationChannel(CH_LIVE, "Laufende Timer (Live)", NotificationManager.IMPORTANCE_DEFAULT).apply {
+            description = "Live-Anzeige laufender Timer – auch auf dem Sperrbildschirm"
+            setSound(null, null)
+            enableVibration(false)
             setShowBadge(false)
+            lockscreenVisibility = Notification.VISIBILITY_PUBLIC
         })
         nm.createNotificationChannel(NotificationChannel(CH_ALARM, "Timer-Alarm", NotificationManager.IMPORTANCE_HIGH).apply {
             description = "Klingelt, wenn ein Timer abgelaufen ist"
@@ -224,7 +228,6 @@ object Timers {
         val b = NotificationCompat.Builder(ctx, CH_LIVE)
             .setSmallIcon(R.drawable.ic_stat_aurion)
             .setColor(0xFF4FD8FF.toInt())
-            .setColorized(true)
             .setContentTitle(title)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .setOngoing(true)
@@ -234,6 +237,13 @@ object Timers {
             .setProgress(total, done, false)
             .setContentIntent(openApp(ctx, t.notifId))
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setPublicVersion(null)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            // Android 16+: als "Live Update" anfragen (Sperrbildschirm, Statusleisten-Chip, Samsung Now Bar)
+            .addExtras(android.os.Bundle().apply {
+                putBoolean("android.requestPromotedOngoing", true)
+                if (!t.paused) putCharSequence("android.shortCriticalText", "${(t.remaining() + 59_999) / 60_000} min")
+            })
         if (t.paused) {
             b.setContentText("Pausiert · noch ${format(t.remaining())}")
                 .setUsesChronometer(false)

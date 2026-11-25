@@ -244,8 +244,6 @@ private fun AssistOverlay(vm: AssistantViewModel, onClose: () -> Unit, onOpenApp
             )
         }
 
-        // Leuchtender Rand, solange Aurion zuhört/denkt oder den Bildschirm "sieht"
-        if (st.orb != OrbState.IDLE || (screenshot != null && selection == null)) EdgeGlow()
 
         AnimatedVisibility(
             visible = visible,
