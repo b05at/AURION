@@ -428,6 +428,16 @@ class Brain(private val ctx: Context) {
             return parts.joinToString(", ")
         }
 
+        val narrator = cc.szakacs.aurion.weather.WeatherNarrator(f, en)
+        // Mehrere Tage: "die nächsten Tage", "diese Woche", "Wochenende"
+        val overview: List<Int>? = when {
+            Regex("wochenende|weekend").containsMatchIn(l) -> {
+                val sat = ((6 - today.dayOfWeek.value) + 7) % 7
+                listOf(sat, sat + 1).filter { it in 0..6 }
+            }
+            Regex("nächsten tage|kommenden tage|diese woche|die woche|ganze woche|wochenvorschau|next (few )?days|this week|the week").containsMatchIn(l) -> (0..4).toList()
+            else -> null
+        }
         val answer = when {
             askSun -> t(lang, "$dayName $where geht die Sonne um ${d.sunrise} Uhr auf und um ${d.sunset} Uhr unter.",
                 "$dayName $where the sun rises at ${d.sunrise} and sets at ${d.sunset}.").replaceFirstChar { it.uppercase() }
@@ -451,26 +461,9 @@ class Brain(private val ctx: Context) {
                 else t(lang, "Nein, Schnee ist $dayName $where nicht in Sicht. Es wird ${cond(d.code)} bei ${deg(d.tMin)} bis ${deg(d.tMax)} Grad.",
                     "No snow in sight $dayName $where. It'll be ${cond(d.code)}, ${deg(d.tMin)} to ${deg(d.tMax)} degrees.")
             }
-            askRain -> {
-                val wet = WeatherService.isWet(d.code) || d.rainProb >= 50
-                val snowNote = if (d.snowProb >= 30) t(lang, " Schnee ist mit ${d.snowProb} % auch möglich.", " Snow is also possible (${d.snowProb}%).") else ""
-                (if (wet) t(lang, "Ja, $dayName liegt die Regenwahrscheinlichkeit $where bei ${d.rainProb} %, etwa ${n1(d.rainSum)} mm. Nimm lieber einen Schirm mit.",
-                    "Yes, $dayName $where there's a ${d.rainProb}% chance of rain, about ${n1(d.rainSum)} mm. Better take an umbrella.")
-                else if (d.rainProb >= 25) t(lang, "Eher nicht, aber $dayName gibt es $where eine Regenwahrscheinlichkeit von ${d.rainProb} %.",
-                    "Probably not, but $dayName there's a ${d.rainProb}% chance of rain $where.")
-                else t(lang, "Nein, $dayName bleibt es $where voraussichtlich trocken (${d.rainProb} %) – ${cond(d.code)}.",
-                    "No, $dayName it should stay dry $where (${d.rainProb}%) – ${cond(d.code)}.")) + snowNote
-            }
-            dayOffset == 0 -> t(lang,
-                "$where hat es gerade ${deg(f.currentTemp)} Grad, gefühlt ${deg(f.currentFeels)}, ${cond(f.currentCode)}. " +
-                    "Heute ${deg(d.tMin)} bis ${deg(d.tMax)} Grad, ${extras(d)}.",
-                "It's currently ${deg(f.currentTemp)} degrees $where, feels like ${deg(f.currentFeels)}, ${cond(f.currentCode)}. " +
-                    "Today ${deg(d.tMin)} to ${deg(d.tMax)} degrees, ${extras(d)}."
-            ).replaceFirstChar { it.uppercase() }
-            else -> t(lang,
-                "${dayName.replaceFirstChar { it.uppercase() }} $where: ${cond(d.code)}, ${deg(d.tMin)} bis ${deg(d.tMax)} Grad, ${extras(d)}.",
-                "${dayName.replaceFirstChar { it.uppercase() }} $where: ${cond(d.code)}, ${deg(d.tMin)} to ${deg(d.tMax)} degrees, ${extras(d)}."
-            )
+            askRain -> narrator.rainAnswer(dayOffset)
+            overview != null -> narrator.overview(overview)
+            else -> narrator.day(dayOffset)
         }
 
         val lines = f.days.take(5).map { day ->

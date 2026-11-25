@@ -41,6 +41,14 @@ data class DayForecast(
     val sunset: String,
 )
 
+data class HourForecast(
+    val time: java.time.LocalDateTime,
+    val temp: Double,
+    val prob: Int,
+    val code: Int,
+    val snow: Double,
+)
+
 data class Forecast(
     val place: Place,
     val currentTemp: Double,
@@ -51,6 +59,7 @@ data class Forecast(
     val humidity: Int,
     val isDay: Boolean,
     val days: List<DayForecast>,
+    val hours: List<HourForecast> = emptyList(),
 )
 
 /** Kostenloses Wetter über Open-Meteo (kein Konto, kein API-Key). */
@@ -116,7 +125,15 @@ object WeatherService {
             c.optDouble("wind_gusts_10m", 0.0),
             c.optInt("relative_humidity_2m", 0),
             c.optInt("is_day", 1) == 1,
-            days
+            days,
+            (0 until hTime.length()).mapNotNull { i ->
+                runCatching {
+                    HourForecast(
+                        java.time.LocalDateTime.parse(hTime.getString(i)),
+                        hTemp.optDouble(i), hProb.optInt(i, 0), hCode.optInt(i), hSnow.optDouble(i, 0.0)
+                    )
+                }.getOrNull()
+            }
         )
     }
 
