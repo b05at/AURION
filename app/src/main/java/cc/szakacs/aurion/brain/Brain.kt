@@ -31,7 +31,7 @@ data class ScreenInput(
     val digest: String? = null,
 )
 
-enum class CardKind { REMINDER, SHOPPING, MEMORY, WEATHER, NONE }
+enum class CardKind { REMINDER, SHOPPING, MEMORY, WEATHER, TIMER, CALL, NONE }
 
 data class Reply(
     val text: String,
@@ -43,6 +43,12 @@ data class Reply(
     val weatherDay: Int = 0,
     /** Einkaufsliste für die Karte: ganze Liste, neu hinzugefügte und entfernte Artikel */
     val shopping: ShoppingView? = null,
+    /** Timer, der in der Karte live angezeigt wird */
+    val timerId: String? = null,
+    /** Kontakte zur Auswahl (Anrufe) */
+    val contacts: List<ContactMatch>? = null,
+    /** Anruf braucht noch Berechtigungen */
+    val needsCallPermission: Boolean = false,
 )
 
 data class ShoppingView(
@@ -84,6 +90,7 @@ class Brain(private val ctx: Context) {
         data class ReminderTime(val text: String) : Pending()
         data class ReminderText(val time: LocalDateTime) : Pending()
         object ShoppingItems : Pending()
+        data class TimerDuration(val label: String?) : Pending()
     }
 
     private var pending: Pending? = null
@@ -138,6 +145,10 @@ class Brain(private val ctx: Context) {
                 }
                 is Pending.ReminderText -> return createReminder(cleanReminderText(text), p.time, lang)
                 Pending.ShoppingItems -> return addShopping(parseItems(text), lang)
+                is Pending.TimerDuration -> {
+                    val d = DurationParser.parse(text)
+                    if (d != null) return startTimer(d.ms, p.label, lang)
+                }
             } else return Reply(t(lang, "Okay, abgebrochen.", "Okay, cancelled."), lang)
         }
 
@@ -610,6 +621,12 @@ class Brain(private val ctx: Context) {
     // ================= Geräteaktionen =================
 
     private suspend fun deviceAction(text: String, l: String, lang: String): Reply? {
+        // Timer
+        if (Regex("\\b(timer\\w*|countdown|kurzzeitwecker|eieruhr|stoppuhr)\\b").containsMatchIn(l)) return timerIntent(text, l, lang)
+        // Anrufen
+        Regex("^(bitte\\s+)?(ruf\\w*|anrufen|telefonier\\w*(\\s+mit)?|call|phone|ring|dial|wähl\\w*)\\s+(.+?)(\\s+an)?[.!?]*$").find(l)?.let { m ->
+            if (!Regex("^(an|mich|mir)$").matches(m.groupValues[4].trim())) return callIntent(text, m.groupValues[4], lang)
+        }
         // Diktat / Transkription
         if (Regex("\\b(diktat\\w*|diktier\\w*|transkri\\w*|mitschreib\\w*|dictat\\w*|transcri\\w*|take a note|notiz aufnehmen|sprachnotiz)\\b").containsMatchIn(l)) {
             runCatching {
@@ -635,11 +652,6 @@ class Brain(private val ctx: Context) {
             return Reply(
                 t(lang, "Wecker gestellt auf ${dt.format(DateTimeFormatter.ofPattern("H:mm"))} Uhr.", "Alarm set for ${dt.format(DateTimeFormatter.ofPattern("h:mm a", Locale.ENGLISH))}."), lang
             )
-        }
-        // Anrufen (Nummer)
-        Regex("^(ruf|wähl\\w*|call|dial)\\s+(die nummer\\s+|the number\\s+)?([+\\d][\\d /-]{4,})(\\s+an)?$").find(l)?.let { m ->
-            device.dial(m.groupValues[3])
-            return Reply(t(lang, "Ich öffne die Telefon-App.", "Opening the dialer."), lang)
         }
         // Navigation
         Regex("^(navigier\\w*|navigate|route|fahr\\w*|bring mich|take me|directions)\\s+(mich\\s+|me\\s+)?(nach|zu|zur|zum|to|in die|in den)\\s+(.+)$").find(l)?.let { m ->
@@ -677,6 +689,127 @@ class Brain(private val ctx: Context) {
             }
         }
         return null
+    }
+
+    // ================= Timer =================
+
+    private fun startTimer(ms: Long, label: String?, lang: String): Reply {
+        val timer = cc.szakacs.aurion.timers.Timers.start(ctx, ms, label)
+        val d = DurationParser.speak(ms, lang == "en")
+        return Reply(
+            t(lang, "Timer für $d gestartet" + (label?.let { " – $it" } ?: "") + ".", "Timer set for $d" + (label?.let { " – $it" } ?: "") + "."),
+            lang, CardKind.TIMER, timerId = timer.id
+        )
+    }
+
+    private fun timerIntent(text: String, l: String, lang: String): Reply {
+        val en = lang == "en"
+        val list = cc.szakacs.aurion.timers.Timers.timers.value.also { cc.szakacs.aurion.timers.Timers.load(ctx) }
+        val all = cc.szakacs.aurion.timers.Timers.timers.value
+        fun pick() = all.firstOrNull { tm -> tm.label != null && l.contains(tm.label.lowercase()) } ?: all.firstOrNull { it.ringing } ?: all.lastOrNull()
+
+        when {
+            Regex("\\b(stopp\\w*|stop|beend\\w*|abbrech\\w*|brich|lösch\\w*|cancel|aus|ausschalten|entfern\\w*|dismiss)\\b").containsMatchIn(l) -> {
+                if (all.isEmpty()) return Reply(t(lang, "Es läuft gerade kein Timer.", "There's no timer running."), lang)
+                if (Regex("\\b(alle|all)\\b").containsMatchIn(l)) {
+                    cc.szakacs.aurion.timers.Timers.stopAll(ctx)
+                    return Reply(t(lang, "Alle Timer gestoppt.", "All timers stopped."), lang)
+                }
+                val tm = pick()!!
+                cc.szakacs.aurion.timers.Timers.stop(ctx, tm.id)
+                return Reply(t(lang, "Timer${tm.label?.let { " „$it“" } ?: ""} gestoppt.", "Timer${tm.label?.let { " \"$it\"" } ?: ""} stopped."), lang)
+            }
+            Regex("\\b(pausier\\w*|pause|anhalten|halt\\w* an)\\b").containsMatchIn(l) -> {
+                val tm = pick() ?: return Reply(t(lang, "Es läuft gerade kein Timer.", "There's no timer running."), lang)
+                cc.szakacs.aurion.timers.Timers.pause(ctx, tm.id)
+                return Reply(t(lang, "Timer pausiert.", "Timer paused."), lang, CardKind.TIMER, timerId = tm.id)
+            }
+            Regex("\\b(weiter\\w*|fortsetz\\w*|resume|continue)\\b").containsMatchIn(l) -> {
+                val tm = all.firstOrNull { it.paused } ?: return Reply(t(lang, "Kein Timer ist pausiert.", "No timer is paused."), lang)
+                cc.szakacs.aurion.timers.Timers.resume(ctx, tm.id)
+                return Reply(t(lang, "Timer läuft weiter.", "Timer resumed."), lang, CardKind.TIMER, timerId = tm.id)
+            }
+            Regex("wie lange|wieviel zeit|wie viel zeit|restzeit|how long|how much time|time left|läuft noch|welche timer|meine timer|my timers").containsMatchIn(l) && DurationParser.parse(text) == null -> {
+                if (all.isEmpty()) return Reply(t(lang, "Es läuft gerade kein Timer.", "There's no timer running."), lang)
+                val parts = all.map { tm ->
+                    val rem = DurationParser.speak((tm.remaining() / 1000 * 1000).coerceAtLeast(1000), en)
+                    (tm.label?.let { "$it: " } ?: "") + if (tm.ringing) t(lang, "abgelaufen", "finished") else rem
+                }
+                return Reply(
+                    t(lang, if (all.size == 1) "Noch ${parts[0]}." else "Laufende Timer: ${parts.joinToString(", ")}.",
+                        if (all.size == 1) "${parts[0]} left." else "Running timers: ${parts.joinToString(", ")}."),
+                    lang, CardKind.TIMER, timerId = all.last().id
+                )
+            }
+            Regex("\\b(plus|mehr|verlänger\\w*|add|more|extend)\\b").containsMatchIn(l) && all.isNotEmpty() -> {
+                val d = DurationParser.parse(text) ?: DurationParser.Result(60_000, "")
+                val tm = pick()!!
+                cc.szakacs.aurion.timers.Timers.addTime(ctx, tm.id, d.ms)
+                return Reply(t(lang, "${DurationParser.speak(d.ms, false)} hinzugefügt.", "Added ${DurationParser.speak(d.ms, true)}."), lang, CardKind.TIMER, timerId = tm.id)
+            }
+        }
+        // Neuen Timer stellen
+        val d = DurationParser.parse(text)
+        val label = timerLabel(d?.rest ?: l)
+        if (d == null) {
+            pending = Pending.TimerDuration(label)
+            return Reply(t(lang, "Wie lange soll der Timer laufen?", "How long should the timer run?"), lang)
+        }
+        if (d.ms > 24 * 3600_000L) return Reply(t(lang, "Timer gehen bis 24 Stunden – für längere Zeiten nimm lieber eine Erinnerung.", "Timers go up to 24 hours – use a reminder for longer."), lang)
+        list.size // (geladen)
+        return startTimer(d.ms, label, lang)
+    }
+
+    private fun timerLabel(rest: String): String? {
+        Regex("\\b(für|fuer|for|namens|called|named)\\s+(den |die |das |the |my |meine?n? )?(.+)$", RegexOption.IGNORE_CASE).find(rest)?.let {
+            val v = it.groupValues[3].trim().trimEnd('.', '!', '?')
+            if (v.isNotBlank() && v.length < 40) return v.replaceFirstChar { c -> c.uppercase() }
+        }
+        val filler = setOf("stell", "stelle", "starte", "start", "setz", "setze", "mach", "mache", "einen", "ein", "eine", "timer", "auf", "bitte",
+            "mir", "set", "a", "for", "the", "please", "countdown", "kurzzeitwecker", "eieruhr", "hey", "aurion", "neuen", "new", "von", "über", "in")
+        val words = rest.split(Regex("\\s+")).map { it.trim(',', '.', '!', '?') }.filter { it.isNotBlank() && it.lowercase() !in filler }
+        return words.joinToString(" ").takeIf { it.length in 2..39 }?.replaceFirstChar { it.uppercase() }
+    }
+
+    // ================= Anrufe =================
+
+    private fun callIntent(text: String, who: String, lang: String): Reply {
+        var name = who.trim()
+            .replace(Regex("^(bei|die nummer|the number|nummer|number|meine?n?|my)\\s+", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\s+(an|bitte|please|now|jetzt)$", RegexOption.IGNORE_CASE), "")
+            .trim()
+        // Nummer direkt
+        if (Regex("^[+\\d][\\d /()-]{3,}$").matches(name)) {
+            later { device.call(name) }
+            return Reply(t(lang, "Ich rufe $name an.", "Calling $name."), lang, CardKind.CALL,
+                contacts = listOf(ContactMatch(name, name, "Telefon")))
+        }
+        if (!device.canReadContacts() || !device.canCall()) {
+            return Reply(
+                t(lang, "Damit ich anrufen kann, erlaube bitte den Zugriff auf Kontakte und Telefon.", "To place calls, please allow access to contacts and phone."),
+                lang, CardKind.CALL, cardTitle = name, needsCallPermission = true
+            )
+        }
+        // Original-Schreibweise für die Suche verwenden
+        val original = Regex(Regex.escape(name), RegexOption.IGNORE_CASE).find(text)?.value ?: name
+        name = original
+        val found = device.findContacts(name)
+        if (found.isEmpty()) {
+            return Reply(t(lang, "Ich habe niemanden namens „$name“ in deinen Kontakten gefunden.", "I couldn't find \"$name\" in your contacts."), lang)
+        }
+        val sameName = found.map { it.name }.distinct()
+        if (sameName.size == 1) {
+            // ein Kontakt (ggf. mehrere Nummern -> beste nehmen)
+            val c = found.first()
+            later { device.call(c.number) }
+            return Reply(t(lang, "Ich rufe ${c.name} an.", "Calling ${c.name}."), lang, CardKind.CALL, contacts = listOf(c))
+        }
+        return Reply(t(lang, "Ich habe mehrere Treffer – tippe auf den richtigen Kontakt.", "I found several matches – tap the right contact."), lang, CardKind.CALL, contacts = found)
+    }
+
+    /** Anruf leicht verzögert starten, damit die Ansage nicht in den Anruf läuft */
+    private fun later(block: () -> Unit) {
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ runCatching { block() } }, 1400)
     }
 
     private fun readClipboard(): String? = runCatching {

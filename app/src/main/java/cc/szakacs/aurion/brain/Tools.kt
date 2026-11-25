@@ -188,6 +188,61 @@ object Units {
         if (lang == "en") "${Calc.fmt(v, lang)} $from is $result." else "${Calc.fmt(v, lang)} $from sind $result."
 }
 
+/** Dauer aus Sprache: "10 Minuten", "1 Stunde 30", "anderthalb Stunden", "90 Sekunden", "5 min", "2:30" */
+object DurationParser {
+    data class Result(val ms: Long, val rest: String)
+
+    private val words = mapOf(
+        "ein" to 1.0, "eine" to 1.0, "einer" to 1.0, "einen" to 1.0, "a" to 1.0, "an" to 1.0, "one" to 1.0,
+        "zwei" to 2.0, "two" to 2.0, "drei" to 3.0, "three" to 3.0, "vier" to 4.0, "four" to 4.0, "fünf" to 5.0, "five" to 5.0,
+        "sechs" to 6.0, "six" to 6.0, "sieben" to 7.0, "seven" to 7.0, "acht" to 8.0, "eight" to 8.0, "neun" to 9.0, "nine" to 9.0,
+        "zehn" to 10.0, "ten" to 10.0, "elf" to 11.0, "zwölf" to 12.0, "fünfzehn" to 15.0, "fifteen" to 15.0,
+        "zwanzig" to 20.0, "twenty" to 20.0, "dreißig" to 30.0, "thirty" to 30.0, "vierzig" to 40.0, "fünfundvierzig" to 45.0,
+        "sechzig" to 60.0, "halbe" to 0.5, "halben" to 0.5, "half" to 0.5, "anderthalb" to 1.5, "eineinhalb" to 1.5,
+    )
+    private const val NUM = "(\\d+(?:[.,]\\d+)?|ein|eine|einer|einen|a|an|one|zwei|two|drei|three|vier|four|fünf|five|sechs|six|sieben|seven|acht|eight|neun|nine|zehn|ten|elf|zwölf|fünfzehn|fifteen|zwanzig|twenty|dreißig|thirty|vierzig|fünfundvierzig|sechzig|halbe|halben|half|anderthalb|eineinhalb)"
+
+    fun parse(input: String): Result? {
+        var s = " " + input.lowercase() + " "
+        var total = 0.0
+        var found = false
+        // "2:30" = 2 Min 30 s
+        Regex("\\b(\\d{1,2}):(\\d{2})\\b").find(s)?.let { m ->
+            total += m.groupValues[1].toDouble() * 60 + m.groupValues[2].toDouble(); found = true
+            s = s.replaceRange(m.range, " ")
+        }
+        Regex("$NUM\\s*(stunden|stunde|std|h|hours?|hrs?|minuten|minute|min|mins?|minutes?|sekunden|sekunde|sek|s|seconds?|secs?)\\b").findAll(s).toList().forEach { m ->
+            val n = m.groupValues[1].replace(',', '.').toDoubleOrNull() ?: words[m.groupValues[1]] ?: return@forEach
+            val u = m.groupValues[2]
+            total += when {
+                u.startsWith("st") || u == "h" || u.startsWith("hour") || u.startsWith("hr") -> n * 3600
+                u.startsWith("min") -> n * 60
+                else -> n
+            }
+            found = true
+            s = s.replace(m.value, " ")
+        }
+        // "eine halbe Stunde" -> "eine" bleibt übrig; "1 Stunde 30" -> 30 Minuten
+        Regex("(stunde\\w*|hour\\w*)\\s+(\\d{1,2})\\b").find(input.lowercase())?.let { m ->
+            if (!Regex("${m.groupValues[2]}\\s*(min|sek|sec)").containsMatchIn(input.lowercase())) total += m.groupValues[2].toDouble() * 60
+        }
+        if (!found || total <= 0) return null
+        return Result((total * 1000).toLong(), s.replace(Regex("\\s+"), " ").trim())
+    }
+
+    fun speak(ms: Long, en: Boolean): String {
+        val s = ms / 1000
+        val h = s / 3600; val m = (s % 3600) / 60; val sec = s % 60
+        val parts = ArrayList<String>()
+        if (h > 0) parts += if (en) "$h hour${if (h == 1L) "" else "s"}" else "$h Stunde${if (h == 1L) "" else "n"}"
+        if (m > 0) parts += if (en) "$m minute${if (m == 1L) "" else "s"}" else "$m Minute${if (m == 1L) "" else "n"}"
+        if (sec > 0) parts += if (en) "$sec second${if (sec == 1L) "" else "s"}" else "$sec Sekunde${if (sec == 1L) "" else "n"}"
+        return parts.joinToString(if (en) " and " else " und ")
+    }
+}
+
+data class ContactMatch(val name: String, val number: String, val type: String)
+
 /** Aktionen am Gerät – alles lokal, über System-Intents. */
 class DeviceActions(private val ctx: Context) {
 
@@ -240,6 +295,67 @@ class DeviceActions(private val ctx: Context) {
     )
 
     fun dial(number: String): Boolean = start(Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + number.filter { it.isDigit() || it == '+' })))
+
+    fun canCall() = androidx.core.content.ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.CALL_PHONE) ==
+        android.content.pm.PackageManager.PERMISSION_GRANTED
+
+    fun canReadContacts() = androidx.core.content.ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.READ_CONTACTS) ==
+        android.content.pm.PackageManager.PERMISSION_GRANTED
+
+    /** Direkt anrufen (mit Berechtigung), sonst Wähltastatur mit Nummer öffnen */
+    fun call(number: String): Boolean {
+        val tel = Uri.parse("tel:" + number.filter { it.isDigit() || it == '+' })
+        return if (canCall()) start(Intent(Intent.ACTION_CALL, tel)) else start(Intent(Intent.ACTION_DIAL, tel))
+    }
+
+    /** Kontakte nach Namen durchsuchen (beste Treffer zuerst) */
+    fun findContacts(query: String): List<ContactMatch> {
+        if (!canReadContacts()) return emptyList()
+        val q = query.trim().lowercase()
+        if (q.isEmpty()) return emptyList()
+        val out = ArrayList<Pair<ContactMatch, Int>>()
+        val cr = ctx.contentResolver
+        runCatching {
+            cr.query(
+                android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                arrayOf(
+                    android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+                    android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER,
+                    android.provider.ContactsContract.CommonDataKinds.Phone.TYPE,
+                    android.provider.ContactsContract.CommonDataKinds.Phone.IS_SUPER_PRIMARY,
+                ),
+                null, null, null
+            )?.use { c ->
+                while (c.moveToNext()) {
+                    val name = c.getString(0) ?: continue
+                    val number = c.getString(1) ?: continue
+                    val n = name.lowercase()
+                    val score = when {
+                        n == q -> 100
+                        n.split(Regex("\\s+")).any { it == q } -> 85
+                        n.startsWith(q) -> 75
+                        n.contains(q) -> 55
+                        q.split(Regex("\\s+")).all { part -> n.contains(part) } -> 50
+                        else -> 0
+                    }
+                    if (score > 0) {
+                        val type = when (c.getInt(2)) {
+                            android.provider.ContactsContract.CommonDataKinds.Phone.TYPE_MOBILE -> "Mobil"
+                            android.provider.ContactsContract.CommonDataKinds.Phone.TYPE_HOME -> "Privat"
+                            android.provider.ContactsContract.CommonDataKinds.Phone.TYPE_WORK -> "Arbeit"
+                            else -> "Telefon"
+                        }
+                        val bonus = (if (c.getInt(3) > 0) 5 else 0) + (if (type == "Mobil") 2 else 0)
+                        out += ContactMatch(name, number, type) to score + bonus
+                    }
+                }
+            }
+        }
+        return out.sortedByDescending { it.second }
+            .distinctBy { it.first.number.filter { ch -> ch.isDigit() }.takeLast(9) }
+            .map { it.first }
+            .take(6)
+    }
 
     fun email(address: String): Boolean = start(Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:$address")))
 

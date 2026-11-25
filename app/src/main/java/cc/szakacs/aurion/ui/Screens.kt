@@ -125,7 +125,7 @@ fun ChatScreen(vm: AssistantViewModel, dictVm: DictationViewModel) {
     val listState = rememberLazyListState()
 
     LaunchedEffect(chat.size, st.orb, st.reply, st.streaming?.length?.div(80)) {
-        val count = chat.size + (if (st.orb != OrbState.IDLE || st.streaming != null) 1 else 0) + (if (st.reply?.weather != null || st.reply?.shopping != null) 1 else 0)
+        val count = chat.size + (if (st.orb != OrbState.IDLE || st.streaming != null) 1 else 0) + (if (st.reply?.weather != null || st.reply?.shopping != null || st.reply?.card == cc.szakacs.aurion.brain.CardKind.CALL) 1 else 0)
         if (count > 0) listState.animateScrollToItem(count - 1)
     }
 
@@ -154,6 +154,8 @@ fun ChatScreen(vm: AssistantViewModel, dictVm: DictationViewModel) {
                 Text("Öffnen", color = AurionColors.Cyan, modifier = Modifier.padding(start = 8.dp))
             }
         }
+        // Live-Timer
+        TimerStrip(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp))
         // Diktat direkt im Chat
         if (dict.active) {
             DictationCard(dictVm, Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp))
@@ -182,7 +184,7 @@ fun ChatScreen(vm: AssistantViewModel, dictVm: DictationViewModel) {
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 items(chat) { Bubble(it) }
-                st.reply?.takeIf { (it.weather != null || it.shopping != null) && st.orb != OrbState.THINKING && chat.isNotEmpty() }?.let { r ->
+                st.reply?.takeIf { (it.weather != null || it.shopping != null || it.card == cc.szakacs.aurion.brain.CardKind.CALL) && st.orb != OrbState.THINKING && chat.isNotEmpty() }?.let { r ->
                     item { ReplyCard(r, Modifier.fillMaxWidth(), showText = false, onCheckItem = { vm.checkOffShopping(it) }) }
                 }
                 if (st.streaming != null && st.lens == null) {

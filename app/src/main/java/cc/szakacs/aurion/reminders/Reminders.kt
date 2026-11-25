@@ -202,6 +202,7 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(ctx: Context, intent: Intent) {
         Reminders.createChannels(ctx)
         Reminders.restoreAll(ctx)
+        cc.szakacs.aurion.timers.Timers.restore(ctx)
         if (intent.action == Intent.ACTION_MY_PACKAGE_REPLACED || intent.action == Intent.ACTION_BOOT_COMPLETED) {
             // Android setzt den Assistenten nach Updates zurück – kurz warten, dann prüfen
             val pending = goAsync()

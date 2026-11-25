@@ -9,5 +9,7 @@ class AurionApp : Application() {
         Reminders.createChannels(this)
         // Falls die App aktualisiert/neu gestartet wurde: offene Erinnerungen sicherstellen
         Reminders.restoreAll(this)
+        // Laufende Timer nach Neustart/Update wiederherstellen
+        cc.szakacs.aurion.timers.Timers.restore(this)
     }
 }

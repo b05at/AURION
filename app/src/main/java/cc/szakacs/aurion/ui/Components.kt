@@ -55,6 +55,19 @@ fun GlassCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.()
 
 @Composable
 fun ReplyCard(reply: Reply, modifier: Modifier = Modifier, showText: Boolean = true, onCheckItem: ((String) -> Unit)? = null) {
+    if (reply.card == CardKind.TIMER && reply.timerId != null || reply.card == CardKind.CALL) {
+        Column(modifier) {
+            if (showText) {
+                GlassCard(Modifier.fillMaxWidth()) {
+                    Text(reply.text, style = MaterialTheme.typography.bodyLarge, color = AurionColors.TextHigh)
+                }
+                Spacer(Modifier.size(12.dp))
+            }
+            if (reply.card == CardKind.TIMER) TimerCard(reply.timerId!!, Modifier.fillMaxWidth())
+            else CallCard(reply.contacts, reply.needsCallPermission, reply.cardTitle, Modifier.fillMaxWidth())
+        }
+        return
+    }
     if (reply.shopping != null) {
         Column(modifier) {
             ShoppingCard(reply.shopping, onCheck = { onCheckItem?.invoke(it) }, modifier = Modifier.fillMaxWidth())
