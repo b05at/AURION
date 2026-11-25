@@ -105,6 +105,9 @@ import java.io.File
 // Gespräch
 // ======================================================================
 
+/** Zählt bei jedem Zurückkehren in die App hoch (für Status-Prüfungen) */
+val LocalResumeTick = androidx.compose.runtime.compositionLocalOf { 0 }
+
 @Composable
 fun ChatScreen(vm: AssistantViewModel) {
     val ctx = LocalContext.current
@@ -119,6 +122,30 @@ fun ChatScreen(vm: AssistantViewModel) {
     }
 
     Column(Modifier.fillMaxSize().imePadding()) {
+        // Hinweis, wenn Android Aurion nach einem Update als Assistent abgemeldet hat
+        val tick = LocalResumeTick.current
+        val lost = remember(tick) { cc.szakacs.aurion.assist.AssistantRole.isLost(ctx).also { if (!it) cc.szakacs.aurion.assist.AssistantRole.sync(ctx) } }
+        if (lost) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(Brush.linearGradient(listOf(Color(0x332F7BFF), Color(0x334FD8FF))))
+                    .clickable { cc.szakacs.aurion.assist.AssistantRole.openSettings(ctx) }
+                    .padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Seitentaste neu verbinden", color = AurionColors.TextHigh, style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Android hat Aurion nach dem Update als Assistent abgemeldet. Tippen und wieder Aurion wählen.",
+                        color = AurionColors.TextMid, style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+                Text("Öffnen", color = AurionColors.Cyan, modifier = Modifier.padding(start = 8.dp))
+            }
+        }
         st.lens?.let { lens ->
             LensCard(lens, vm, Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) { vm.closeLens() }
         }
@@ -419,12 +446,12 @@ fun SettingsScreen(tick: Int) {
         // ---------- Assistent ----------
         SectionTitle("Assistent")
         GlassCard(Modifier.fillMaxWidth()) {
-            val isDefault = remember(tick) { isDefaultAssistant(ctx) }
+            val isDefault = remember(tick) { cc.szakacs.aurion.assist.AssistantRole.sync(ctx) }
             StatusRow(
                 "Standard-Assistent",
                 if (isDefault) "Aurion startet über Seitentaste / Assistent-Geste" else "Unter „Digitaler Assistent“ Aurion wählen",
                 isDefault, if (isDefault) null else "Öffnen"
-            ) { openAssistantSettings(ctx) }
+            ) { cc.szakacs.aurion.assist.AssistantRole.openSettings(ctx) }
             val mic = remember(tick) { hasPerm(ctx, android.Manifest.permission.RECORD_AUDIO) }
             StatusRow("Mikrofon", if (mic) "Erlaubt" else "Wird für Spracheingabe benötigt", mic, if (mic) null else "Erlauben") { openAppSettings(ctx) }
             val notif = remember(tick) {

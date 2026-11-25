@@ -76,7 +76,9 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             AurionTheme {
-                AurionMain(vm, resumeTick.intValue, requestedTab) { requestedTab = null }
+                androidx.compose.runtime.CompositionLocalProvider(LocalResumeTick provides resumeTick.intValue) {
+                    AurionMain(vm, resumeTick.intValue, requestedTab) { requestedTab = null }
+                }
             }
         }
     }

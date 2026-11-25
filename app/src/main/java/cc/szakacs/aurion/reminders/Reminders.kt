@@ -202,5 +202,17 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(ctx: Context, intent: Intent) {
         Reminders.createChannels(ctx)
         Reminders.restoreAll(ctx)
+        if (intent.action == Intent.ACTION_MY_PACKAGE_REPLACED || intent.action == Intent.ACTION_BOOT_COMPLETED) {
+            // Android setzt den Assistenten nach Updates zurück – kurz warten, dann prüfen
+            val pending = goAsync()
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                try {
+                    if (cc.szakacs.aurion.assist.AssistantRole.isLost(ctx)) cc.szakacs.aurion.assist.AssistantRole.notifyLost(ctx)
+                    else cc.szakacs.aurion.assist.AssistantRole.sync(ctx)
+                } finally {
+                    pending.finish()
+                }
+            }, 4000)
+        }
     }
 }

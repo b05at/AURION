@@ -30,6 +30,7 @@ class AurionSession(ctx: Context) : VoiceInteractionSession(ctx) {
     override fun onCreate() {
         super.onCreate()
         current = this
+        runCatching { AssistantRole.sync(context) }
     }
 
     override fun onPrepareShow(args: Bundle?, showFlags: Int) {
