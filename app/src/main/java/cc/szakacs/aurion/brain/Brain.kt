@@ -286,11 +286,14 @@ class Brain(private val ctx: Context) {
         val where = if (p.name == "hier") t(lang, "hier", "here") else t(lang, "in ${p.name}", "in ${p.name}")
         val deg = WeatherService::deg
 
-        val askRain = Regex("regnen|regnet|\\bregen\\b|schirm|\\brain\\b|raining|umbrella|nass|wet").containsMatchIn(l)
-        val askSnow = Regex("schneien|schneit|\\bschnee\\b|\\bsnow").containsMatchIn(l)
-        val askWind = Regex("wind|sturm|böen|boeen|gust|storm").containsMatchIn(l)
-        val askSun = Regex("sonnenaufgang|sonnenuntergang|sonne auf|sonne unter|wann wird es (hell|dunkel)|sunrise|sunset").containsMatchIn(l)
-        val askUv = Regex("\\buv\\b|sonnencreme|sonnenschutz|sunscreen").containsMatchIn(l)
+        // Allgemeine Wetterfrage ("Wie ist das Wetter?") -> immer der volle Bericht, kein Ja/Nein
+        val general = Regex("wetter|weather|vorhersage|forecast|wie wird es|what.?s it like").containsMatchIn(l) &&
+            !Regex("^(wird|regnet|schneit|gibt es|brauche|brauch|will|is it|does|do i|should)\\b").containsMatchIn(l.trim())
+        val askRain = !general && Regex("regnen|regnet|\\bregen\\b|schirm|\\brain\\b|raining|umbrella|\\bnass\\b|\\bwet\\b").containsMatchIn(l)
+        val askSnow = !general && Regex("schneien|schneit|\\bschnee\\b|\\bsnow").containsMatchIn(l)
+        val askWind = !general && Regex("wind|sturm|böen|boeen|gust|storm").containsMatchIn(l)
+        val askSun = !general && Regex("sonnenaufgang|sonnenuntergang|sonne auf|sonne unter|wann wird es (hell|dunkel)|sunrise|sunset").containsMatchIn(l)
+        val askUv = !general && Regex("\\buv\\b|sonnencreme|sonnenschutz|sunscreen").containsMatchIn(l)
 
         fun n1(v: Double) = if (en) "%.1f".format(Locale.ENGLISH, v) else "%.1f".format(Locale.GERMAN, v)
         fun cond(c: Int) = WeatherService.describe(c, en)
