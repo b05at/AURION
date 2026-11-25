@@ -7,6 +7,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.OpenableColumns
+import android.speech.tts.TextToSpeech
 import android.provider.Settings as AndroidSettings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -38,6 +39,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Snooze
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -47,13 +49,17 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -84,6 +90,7 @@ import cc.szakacs.aurion.reminders.Reminders
 import cc.szakacs.aurion.ui.theme.AurionColors
 import cc.szakacs.aurion.update.UpdateInfo
 import cc.szakacs.aurion.update.Updater
+import cc.szakacs.aurion.voice.Speaker
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
@@ -401,6 +408,10 @@ fun SettingsScreen(tick: Int) {
             ToggleRow("Beim Öffnen sofort zuhören", settings.listenOnOpen) { settings.listenOnOpen = it }
         }
 
+        // ---------- Stimme ----------
+        SectionTitle("Stimme")
+        VoiceSection()
+
         // ---------- Sprachmodell ----------
         SectionTitle("Lokales Sprachmodell")
         ModelSection()
@@ -436,6 +447,109 @@ fun SettingsScreen(tick: Int) {
             }
         }
         Spacer(Modifier.height(40.dp))
+    }
+}
+
+@Composable
+private fun VoiceSection() {
+    val ctx = LocalContext.current
+    val settings = Settings.get(ctx)
+    val speaker = remember { Speaker(ctx) }
+    DisposableEffect(Unit) { onDispose { speaker.shutdown() } }
+    val ready by speaker.ready.collectAsState()
+    var lang by remember { mutableStateOf(if (settings.lastLang == "en") "en" else "de") }
+    var selDe by remember { mutableStateOf(settings.voiceDe) }
+    var selEn by remember { mutableStateOf(settings.voiceEn) }
+    var rate by remember { mutableFloatStateOf(settings.speechRate) }
+    var showOnline by remember { mutableStateOf(false) }
+
+    val sample = if (lang == "en") "Hi, I'm Aurion. This is how I sound." else "Hallo, ich bin Aurion. So klinge ich."
+    fun choose(name: String?) {
+        if (lang == "en") { selEn = name; settings.voiceEn = name } else { selDe = name; settings.voiceDe = name }
+        speaker.speak(sample, lang, voiceName = name)
+    }
+
+    GlassCard(Modifier.fillMaxWidth()) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("de" to "Deutsch", "en" to "English").forEach { (code, label) ->
+                FilterChip(
+                    selected = lang == code,
+                    onClick = { lang = code },
+                    label = { Text(label) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = Color(0x332F7BFF), selectedLabelColor = AurionColors.Cyan
+                    )
+                )
+            }
+        }
+        if (!ready) {
+            Text("Stimmen werden geladen …", color = AurionColors.TextMid, modifier = Modifier.padding(top = 10.dp))
+        } else {
+            val all = remember(ready, lang) { speaker.voices(lang) }
+            val voices = if (showOnline) all else all.filterNot { it.isNetworkConnectionRequired }
+            val selected = if (lang == "en") selEn else selDe
+            Text(
+                "Tippe auf eine Stimme, um sie zu hören und auszuwählen.",
+                style = MaterialTheme.typography.bodyMedium, color = AurionColors.TextLow, modifier = Modifier.padding(top = 10.dp, bottom = 4.dp)
+            )
+            VoiceRow("Systemstandard", "Stimme aus den Android-Einstellungen", selected == null) { choose(null) }
+            voices.forEachIndexed { i, v ->
+                val region = v.locale.getDisplayCountry(java.util.Locale.GERMAN).ifBlank { v.locale.displayName }
+                val quality = when {
+                    v.quality >= 500 -> "sehr hohe Qualität"
+                    v.quality >= 400 -> "hohe Qualität"
+                    else -> "normale Qualität"
+                }
+                VoiceRow(
+                    "Stimme ${i + 1} · $region",
+                    "$quality · ${if (v.isNetworkConnectionRequired) "online" else "offline"}",
+                    selected == v.name
+                ) { choose(v.name) }
+            }
+            if (voices.isEmpty()) {
+                Text("Keine Offline-Stimme für diese Sprache installiert.", color = AurionColors.Amber, modifier = Modifier.padding(top = 6.dp))
+            }
+            if (all.any { it.isNetworkConnectionRequired }) {
+                ToggleRow("Online-Stimmen anzeigen", showOnline) { showOnline = it }
+            }
+        }
+
+        Text("Sprechtempo: ${"%.2f".format(rate)}×", color = AurionColors.TextHigh, modifier = Modifier.padding(top = 14.dp))
+        Slider(
+            value = rate,
+            onValueChange = { rate = it },
+            onValueChangeFinished = {
+                settings.speechRate = rate
+                speaker.speak(sample, lang)
+            },
+            valueRange = 0.7f..1.5f,
+            colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = AurionColors.Blue)
+        )
+        SecondaryButton("Weitere Stimmen installieren", Modifier.fillMaxWidth()) {
+            val ok = runCatching { ctx.startActivity(Intent("com.android.settings.TTS_SETTINGS").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess
+            if (!ok) runCatching { ctx.startActivity(Intent(TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+        }
+    }
+}
+
+@Composable
+private fun VoiceRow(title: String, subtitle: String, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (selected) Color(0x262F7BFF) else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp, horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(if (selected) "●" else "○", color = if (selected) AurionColors.Cyan else AurionColors.TextLow)
+        Spacer(Modifier.size(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, color = AurionColors.TextHigh, style = MaterialTheme.typography.titleMedium)
+            Text(subtitle, color = AurionColors.TextMid, style = MaterialTheme.typography.bodyMedium)
+        }
+        Icon(Icons.Rounded.PlayArrow, "Anhören", tint = AurionColors.TextMid)
     }
 }
 

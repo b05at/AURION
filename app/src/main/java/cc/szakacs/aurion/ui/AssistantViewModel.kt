@@ -102,13 +102,13 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
             _state.value = _state.value.copy(reply = reply)
             if (settings.speakReplies) {
                 _state.value = _state.value.copy(orb = OrbState.SPEAKING)
-                speaker.speak(reply.text, reply.lang) {
+                speaker.speak(reply.text, reply.lang, done = {
                     viewModelScope.launch {
                         _state.value = _state.value.copy(orb = OrbState.IDLE)
                         // Bei Rückfragen direkt wieder zuhören
                         if (reply.text.trimEnd().endsWith("?")) startListening() else onConversationIdle?.invoke()
                     }
-                }
+                })
             } else {
                 _state.value = _state.value.copy(orb = OrbState.IDLE)
                 if (reply.text.trimEnd().endsWith("?")) startListening()
@@ -119,6 +119,13 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
     fun reset() {
         stop()
         _state.value = AssistUiState()
+    }
+
+    /** Neues Gespräch: Verlauf, Rückfragen und Anzeige leeren */
+    fun newConversation() {
+        reset()
+        brain.resetConversation()
+        cc.szakacs.aurion.data.Store.get(ctx).clearChat()
     }
 
     override fun onCleared() {

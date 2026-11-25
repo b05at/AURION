@@ -47,6 +47,10 @@ class Brain(private val ctx: Context) {
 
     private var pending: Pending? = null
 
+    fun resetConversation() {
+        pending = null
+    }
+
     suspend fun handle(input: String): Reply {
         val text = input.trim()
         val lang = when (settings.langMode) {

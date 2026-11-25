@@ -25,6 +25,19 @@ class Settings private constructor(private val p: SharedPreferences) {
         get() = p.getBoolean("listenOnOpen", true)
         set(v) = p.edit().putBoolean("listenOnOpen", v).apply()
 
+    /** Name der gewählten TTS-Stimme (null = Systemstandard) */
+    var voiceDe: String?
+        get() = p.getString("voiceDe", null)
+        set(v) = p.edit().putString("voiceDe", v).apply()
+
+    var voiceEn: String?
+        get() = p.getString("voiceEn", null)
+        set(v) = p.edit().putString("voiceEn", v).apply()
+
+    var speechRate: Float
+        get() = p.getFloat("speechRate", 1.05f)
+        set(v) = p.edit().putFloat("speechRate", v).apply()
+
     var modelPath: String?
         get() = p.getString("modelPath", null)
         set(v) = p.edit().putString("modelPath", v).apply()

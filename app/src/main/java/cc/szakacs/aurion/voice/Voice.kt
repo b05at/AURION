@@ -11,6 +11,7 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.speech.tts.Voice
 import java.util.Locale
 
 /** Findet einen System-Spracherkenner, der nicht Aurion selbst ist. */
@@ -115,12 +116,14 @@ class SpeechInput(private val ctx: Context) {
     }
 }
 
-/** Sprachausgabe mit automatischer Wahl Deutsch/Englisch. */
+/** Sprachausgabe mit automatischer Wahl Deutsch/Englisch und wählbarer Stimme. */
 class Speaker(ctx: Context) {
-    private var ready = false
+    private val settings = cc.szakacs.aurion.data.Settings.get(ctx)
     private var onDone: (() -> Unit)? = null
+    private val _ready = kotlinx.coroutines.flow.MutableStateFlow(false)
+    val ready: kotlinx.coroutines.flow.StateFlow<Boolean> = _ready
     private val tts: TextToSpeech = TextToSpeech(ctx.applicationContext) { status ->
-        ready = status == TextToSpeech.SUCCESS
+        _ready.value = status == TextToSpeech.SUCCESS
     }
 
     init {
@@ -132,13 +135,27 @@ class Speaker(ctx: Context) {
         })
     }
 
-    fun speak(text: String, lang: String, done: (() -> Unit)? = null) {
+    /** Installierte Stimmen für "de" bzw. "en" – Offline-Stimmen und höchste Qualität zuerst. */
+    fun voices(lang: String): List<Voice> = runCatching {
+        tts.voices.orEmpty()
+            .filter { it.locale.language == lang }
+            .filterNot { it.features?.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) == true }
+            .sortedWith(compareBy<Voice>({ it.isNetworkConnectionRequired }, { -it.quality }, { it.locale.toString() }, { it.name }))
+    }.getOrDefault(emptyList())
+
+    fun speak(text: String, lang: String, voiceName: String? = null, done: (() -> Unit)? = null) {
         onDone = done
-        if (!ready) { done?.invoke(); return }
-        val locale = if (lang == "en") Locale.US else Locale.GERMANY
-        val res = tts.setLanguage(locale)
-        if (res == TextToSpeech.LANG_MISSING_DATA || res == TextToSpeech.LANG_NOT_SUPPORTED) tts.setLanguage(Locale.getDefault())
-        tts.setSpeechRate(1.05f)
+        if (!_ready.value) { done?.invoke(); return }
+        val wanted = voiceName ?: if (lang == "en") settings.voiceEn else settings.voiceDe
+        val voice = wanted?.let { n -> runCatching { tts.voices?.firstOrNull { it.name == n } }.getOrNull() }
+        if (voice != null) {
+            tts.voice = voice
+        } else {
+            val locale = if (lang == "en") Locale.US else Locale.GERMANY
+            val res = tts.setLanguage(locale)
+            if (res == TextToSpeech.LANG_MISSING_DATA || res == TextToSpeech.LANG_NOT_SUPPORTED) tts.setLanguage(Locale.getDefault())
+        }
+        tts.setSpeechRate(settings.speechRate)
         tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "aurion-" + System.nanoTime())
     }
 

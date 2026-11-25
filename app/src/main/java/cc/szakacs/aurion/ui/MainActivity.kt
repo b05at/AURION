@@ -69,6 +69,8 @@ class MainActivity : ComponentActivity() {
         )
         super.onCreate(savedInstanceState)
         requestedTab = intent?.getStringExtra("tab")
+        // Beim Öffnen der App mit leerem Gespräch starten
+        if (savedInstanceState == null) vm.newConversation()
         setContent {
             AurionTheme {
                 AurionMain(vm, resumeTick.intValue, requestedTab) { requestedTab = null }
@@ -86,8 +88,17 @@ class MainActivity : ComponentActivity() {
         resumeTick.intValue++
     }
 
+    private var stoppedAt = 0L
+
+    override fun onRestart() {
+        super.onRestart()
+        // Nach mehr als einer Minute im Hintergrund wieder frisch starten
+        if (stoppedAt > 0 && System.currentTimeMillis() - stoppedAt > 60_000) vm.newConversation()
+    }
+
     override fun onStop() {
         super.onStop()
+        stoppedAt = System.currentTimeMillis()
         vm.stop()
     }
 }
