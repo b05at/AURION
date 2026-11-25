@@ -159,6 +159,8 @@ class LlmEngine private constructor(private val ctx: Context) {
     private fun clean(s: String): String = s
         .replace(Regex("<think>[\\s\\S]*?</think>"), "")
         .replace("<|im_end|>", "").replace("<end_of_turn>", "").replace("<|endoftext|>", "")
+        // Manche Modelle schreiben Zeilenumbrüche als Text "\\n"
+        .replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\t", "  ")
         .trim()
         .removePrefix("Aurion:").trim()
         .substringBefore("\nUser:")

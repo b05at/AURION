@@ -95,7 +95,7 @@ class Brain(private val ctx: Context) {
         screenCache = null
         this.spoken = spoken
         partial = onPartial
-        val text = input.trim()
+        val text = normalize(input.trim())
         val lang = when (settings.langMode) {
             LangMode.DE -> "de"
             LangMode.EN -> "en"
@@ -668,6 +668,26 @@ class Brain(private val ctx: Context) {
             BringItem(o.getString("name"), o.optString("spec", ""))
         }.filter { it.name.isNotBlank() }
     }.getOrDefault(emptyList())
+
+    /** Häufige Tippfehler bei Befehlswörtern korrigieren, damit Befehle trotzdem erkannt werden */
+    private fun normalize(t: String): String {
+        var r = t
+        val fixes = listOf(
+            "\\be+r+i+n+e*r+(?=[a-zäöü]|\\b)" to "erinner",          // errinnere, erinere, erinnner …
+            "\\bre+m+i+n+d" to "remind",                                // remmind, reminnd
+            "\\beinkau?f?s?l[iue]?s?t?e\\b" to "einkaufsliste",         // einkausliste, einkaufslste
+            "\\beinkaufsz[ae]t+el\\b" to "einkaufszettel",
+            "\\bwet+er\\b" to "wetter",                                 // weter, wettter
+            "\\bmerk+e?\\s+dir\\b" to "merk dir",
+            "\\bvergis+\\b" to "vergiss",
+        )
+        for ((pat, rep) in fixes) {
+            r = Regex(pat, RegexOption.IGNORE_CASE).replace(r) { m ->
+                if (m.value.first().isUpperCase()) rep.replaceFirstChar { it.uppercase() } else rep
+            }
+        }
+        return r
+    }
 
     private fun isCancel(l: String) = Regex("^(abbrechen|abbruch|stopp?|nichts|vergiss es|cancel|never ?mind|nothing)\\b").containsMatchIn(l)
 
