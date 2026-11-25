@@ -32,7 +32,13 @@ data class DayForecast(
     val tMax: Double,
     val rainProb: Int,
     val rainSum: Double,
+    val snowProb: Int,
+    val snowSum: Double,
     val windMax: Double,
+    val gustMax: Double,
+    val uvMax: Double,
+    val sunrise: String,
+    val sunset: String,
 )
 
 data class Forecast(
@@ -41,6 +47,9 @@ data class Forecast(
     val currentFeels: Double,
     val currentCode: Int,
     val currentWind: Double,
+    val currentGust: Double,
+    val humidity: Int,
+    val isDay: Boolean,
     val days: List<DayForecast>,
 )
 
@@ -49,22 +58,53 @@ object WeatherService {
 
     suspend fun forecast(place: Place): Forecast = withContext(Dispatchers.IO) {
         val url = "https://api.open-meteo.com/v1/forecast?latitude=${place.lat}&longitude=${place.lon}" +
-            "&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m" +
-            "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum,wind_speed_10m_max" +
+            "&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,wind_gusts_10m,relative_humidity_2m,is_day" +
+            "&hourly=temperature_2m,precipitation_probability,snowfall,weather_code" +
+            "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum," +
+            "rain_sum,showers_sum,snowfall_sum,wind_speed_10m_max,wind_gusts_10m_max,uv_index_max,sunrise,sunset" +
             "&timezone=auto&forecast_days=7"
         val o = JSONObject(get(url))
         val c = o.getJSONObject("current")
         val d = o.getJSONObject("daily")
+        val h = o.getJSONObject("hourly")
+
+        // Schnee-Wahrscheinlichkeit je Tag: höchste Niederschlagswahrscheinlichkeit
+        // in Stunden mit Schneefall bzw. Frost (Open-Meteo liefert sie nicht direkt)
+        val hTime = h.getJSONArray("time")
+        val hTemp = h.getJSONArray("temperature_2m")
+        val hProb = h.getJSONArray("precipitation_probability")
+        val hSnow = h.getJSONArray("snowfall")
+        val hCode = h.getJSONArray("weather_code")
+        val snowProbByDay = HashMap<String, Int>()
+        for (i in 0 until hTime.length()) {
+            val day = hTime.getString(i).take(10)
+            val code = hCode.optInt(i)
+            val snowy = hSnow.optDouble(i, 0.0) > 0.0 || code in 71..77 || code in 85..86 ||
+                (hTemp.optDouble(i, 10.0) <= 1.0 && hProb.optInt(i, 0) > 0)
+            if (snowy) snowProbByDay[day] = maxOf(snowProbByDay[day] ?: 0, hProb.optInt(i, 0))
+        }
+
         val dates = d.getJSONArray("time")
         val days = (0 until dates.length()).map { i ->
+            val date = dates.getString(i)
+            val snowSum = d.getJSONArray("snowfall_sum").optDouble(i, 0.0)
+            val code = d.getJSONArray("weather_code").optInt(i)
+            var snowProb = snowProbByDay[date] ?: 0
+            if (snowSum > 0 && snowProb == 0) snowProb = d.getJSONArray("precipitation_probability_max").optInt(i, 0)
             DayForecast(
-                date = LocalDate.parse(dates.getString(i)),
-                code = d.getJSONArray("weather_code").optInt(i),
+                date = LocalDate.parse(date),
+                code = code,
                 tMin = d.getJSONArray("temperature_2m_min").optDouble(i),
                 tMax = d.getJSONArray("temperature_2m_max").optDouble(i),
                 rainProb = d.getJSONArray("precipitation_probability_max").optInt(i, 0),
-                rainSum = d.getJSONArray("precipitation_sum").optDouble(i, 0.0),
+                rainSum = d.getJSONArray("rain_sum").optDouble(i, 0.0) + d.getJSONArray("showers_sum").optDouble(i, 0.0),
+                snowProb = snowProb,
+                snowSum = snowSum,
                 windMax = d.getJSONArray("wind_speed_10m_max").optDouble(i, 0.0),
+                gustMax = d.getJSONArray("wind_gusts_10m_max").optDouble(i, 0.0),
+                uvMax = d.getJSONArray("uv_index_max").optDouble(i, 0.0),
+                sunrise = d.getJSONArray("sunrise").optString(i, "").takeLast(5),
+                sunset = d.getJSONArray("sunset").optString(i, "").takeLast(5),
             )
         }
         Forecast(
@@ -73,6 +113,9 @@ object WeatherService {
             c.optDouble("apparent_temperature"),
             c.optInt("weather_code"),
             c.optDouble("wind_speed_10m"),
+            c.optDouble("wind_gusts_10m", 0.0),
+            c.optInt("relative_humidity_2m", 0),
+            c.optInt("is_day", 1) == 1,
             days
         )
     }

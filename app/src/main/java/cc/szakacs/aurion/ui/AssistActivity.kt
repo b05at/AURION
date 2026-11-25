@@ -13,7 +13,9 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -124,6 +126,7 @@ class AssistActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun AssistOverlay(vm: AssistantViewModel, onClose: () -> Unit, onOpenApp: () -> Unit) {
     val st by vm.state.collectAsState()
@@ -178,11 +181,10 @@ private fun AssistOverlay(vm: AssistantViewModel, onClose: () -> Unit, onOpenApp
                     Spacer(Modifier.height(18.dp))
                 }
 
+                // Nur echtes Transkript bzw. Fehlerhinweis – keine Platzhaltertexte
                 val shown = when {
                     st.transcript.isNotBlank() -> st.transcript
                     st.hint != null -> st.hint!!
-                    st.orb == OrbState.LISTENING -> "Ich höre zu …"
-                    st.reply == null -> "Wie kann ich helfen?"
                     else -> ""
                 }
                 if (shown.isNotEmpty()) {
@@ -230,34 +232,20 @@ private fun AssistOverlay(vm: AssistantViewModel, onClose: () -> Unit, onOpenApp
                     Spacer(Modifier.height(12.dp))
                 }
 
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                // Nur der Orb: Tippen = zuhören/stoppen, lange drücken = Tastatur
+                Box(
+                    Modifier
+                        .size(150.dp)
+                        .combinedClickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onLongClick = { typing = !typing; if (typing) vm.stop() },
+                            onClick = { typing = false; vm.toggleListening() }
+                        ),
+                    contentAlignment = Alignment.Center
                 ) {
-                    IconButton(onClick = { typing = !typing; if (typing) vm.stop() }) {
-                        Icon(Icons.Rounded.Keyboard, "Tippen", tint = AurionColors.TextMid)
-                    }
-                    Box(
-                        Modifier
-                            .size(150.dp)
-                            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
-                                typing = false; vm.toggleListening()
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        AurionOrb(st.orb, st.level, size = 150.dp)
-                    }
-                    IconButton(onClick = onClose) {
-                        Icon(Icons.Rounded.Close, "Schließen", tint = AurionColors.TextMid)
-                    }
+                    AurionOrb(st.orb, st.level, size = 150.dp)
                 }
-                Text(
-                    "AURION",
-                    style = MaterialTheme.typography.labelLarge.copy(letterSpacing = MaterialTheme.typography.labelLarge.fontSize * 0.5f),
-                    color = AurionColors.Silver.copy(alpha = 0.6f),
-                    modifier = Modifier.clickable { onOpenApp() }.padding(6.dp)
-                )
             }
         }
     }

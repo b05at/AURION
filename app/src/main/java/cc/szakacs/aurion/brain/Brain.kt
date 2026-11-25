@@ -26,6 +26,8 @@ data class Reply(
     val card: CardKind = CardKind.NONE,
     val cardTitle: String? = null,
     val cardLines: List<String> = emptyList(),
+    val weather: cc.szakacs.aurion.weather.Forecast? = null,
+    val weatherDay: Int = 0,
 )
 
 /**
@@ -103,7 +105,7 @@ class Brain(private val ctx: Context) {
         }
 
         // --- Wetter ---
-        if (Regex("wetter|regnen|regnet|\\bregen\\b|schneien|schneit|\\bschnee\\b|gewitter|wie warm|wie kalt|grad hat es|temperatur|regenschirm|\\bschirm\\b|sonnig|vorhersage|weather|\\brain\\b|raining|\\bsnow|temperature|how warm|how cold|umbrella|forecast|sunny").containsMatchIn(l)
+        if (Regex("wetter|regnen|regnet|sonnenaufgang|sonnenuntergang|windig|\\bsturm|böen|\\buv\\b|sonnencreme|sunrise|sunset|windy|\\bregen\\b|schneien|schneit|\\bschnee\\b|gewitter|wie warm|wie kalt|grad hat es|temperatur|regenschirm|\\bschirm\\b|sonnig|vorhersage|weather|\\brain\\b|raining|\\bsnow|temperature|how warm|how cold|umbrella|forecast|sunny").containsMatchIn(l)
             && !Regex("erinner|remind").containsMatchIn(l)
         ) {
             return weather(text, l, lang)
@@ -286,45 +288,77 @@ class Brain(private val ctx: Context) {
 
         val askRain = Regex("regnen|regnet|\\bregen\\b|schirm|\\brain\\b|raining|umbrella|nass|wet").containsMatchIn(l)
         val askSnow = Regex("schneien|schneit|\\bschnee\\b|\\bsnow").containsMatchIn(l)
-        val askTemp = Regex("wie warm|wie kalt|grad|temperatur|how warm|how cold|temperature").containsMatchIn(l)
+        val askWind = Regex("wind|sturm|böen|boeen|gust|storm").containsMatchIn(l)
+        val askSun = Regex("sonnenaufgang|sonnenuntergang|sonne auf|sonne unter|wann wird es (hell|dunkel)|sunrise|sunset").containsMatchIn(l)
+        val askUv = Regex("\\buv\\b|sonnencreme|sonnenschutz|sunscreen").containsMatchIn(l)
+
+        fun n1(v: Double) = if (en) "%.1f".format(Locale.ENGLISH, v) else "%.1f".format(Locale.GERMAN, v)
+        fun cond(c: Int) = WeatherService.describe(c, en)
+
+        // Alle relevanten Zusatzinfos zu einem Tag
+        fun extras(day: cc.szakacs.aurion.weather.DayForecast): String {
+            val parts = ArrayList<String>()
+            parts += if (day.rainSum >= 0.1) t(lang, "Regen ${day.rainProb} % (${n1(day.rainSum)} mm)", "rain ${day.rainProb}% (${n1(day.rainSum)} mm)")
+            else t(lang, "Regenwahrscheinlichkeit ${day.rainProb} %", "${day.rainProb}% chance of rain")
+            if (day.snowProb > 0 || day.snowSum > 0 || day.tMin <= 2.0) {
+                parts += if (day.snowSum >= 0.1) t(lang, "Schnee ${day.snowProb} % (${n1(day.snowSum)} cm)", "snow ${day.snowProb}% (${n1(day.snowSum)} cm)")
+                else t(lang, "Schneewahrscheinlichkeit ${day.snowProb} %", "${day.snowProb}% chance of snow")
+            }
+            if (day.gustMax >= 40) parts += t(lang, "Böen bis ${deg(day.gustMax)} km/h", "gusts up to ${deg(day.gustMax)} km/h")
+            return parts.joinToString(", ")
+        }
 
         val answer = when {
+            askSun -> t(lang, "$dayName $where geht die Sonne um ${d.sunrise} Uhr auf und um ${d.sunset} Uhr unter.",
+                "$dayName $where the sun rises at ${d.sunrise} and sets at ${d.sunset}.").replaceFirstChar { it.uppercase() }
+            askUv -> t(lang, "Der UV-Index erreicht $dayName $where bis zu ${n1(d.uvMax)}." + if (d.uvMax >= 3) " Sonnenschutz ist sinnvoll." else "",
+                "The UV index $dayName $where reaches up to ${n1(d.uvMax)}." + if (d.uvMax >= 3) " Sunscreen is a good idea." else "")
+            askWind -> t(lang, "$dayName $where: Wind bis ${deg(d.windMax)} km/h, Böen bis ${deg(d.gustMax)} km/h." +
+                    (if (dayOffset == 0) " Gerade ${deg(f.currentWind)} km/h." else ""),
+                "$dayName $where: wind up to ${deg(d.windMax)} km/h, gusts up to ${deg(d.gustMax)} km/h." +
+                    (if (dayOffset == 0) " Currently ${deg(f.currentWind)} km/h." else "")).replaceFirstChar { it.uppercase() }
+            askSnow -> {
+                if (d.snowProb >= 40 || d.snowSum >= 0.1 || WeatherService.isSnow(d.code))
+                    t(lang, "Ja, $dayName liegt die Schneewahrscheinlichkeit $where bei ${d.snowProb} %" +
+                            (if (d.snowSum >= 0.1) ", erwartet werden etwa ${n1(d.snowSum)} cm" else "") +
+                            ". Temperaturen ${deg(d.tMin)} bis ${deg(d.tMax)} Grad.",
+                        "Yes, $dayName $where there's a ${d.snowProb}% chance of snow" +
+                            (if (d.snowSum >= 0.1) ", about ${n1(d.snowSum)} cm expected" else "") +
+                            ". Temperatures ${deg(d.tMin)} to ${deg(d.tMax)} degrees.")
+                else if (d.snowProb > 0)
+                    t(lang, "Eher nicht – die Schneewahrscheinlichkeit liegt $dayName $where bei ${d.snowProb} %, bei ${deg(d.tMin)} bis ${deg(d.tMax)} Grad.",
+                        "Unlikely – $dayName $where there's a ${d.snowProb}% chance of snow, ${deg(d.tMin)} to ${deg(d.tMax)} degrees.")
+                else t(lang, "Nein, Schnee ist $dayName $where nicht in Sicht. Es wird ${cond(d.code)} bei ${deg(d.tMin)} bis ${deg(d.tMax)} Grad.",
+                    "No snow in sight $dayName $where. It'll be ${cond(d.code)}, ${deg(d.tMin)} to ${deg(d.tMax)} degrees.")
+            }
             askRain -> {
                 val wet = WeatherService.isWet(d.code) || d.rainProb >= 50
-                if (wet) t(lang, "Ja, $dayName $where liegt die Regenwahrscheinlichkeit bei ${d.rainProb} %, etwa ${"%.1f".format(d.rainSum)} mm. Nimm lieber einen Schirm mit.",
-                    "Yes, $dayName $where there's a ${d.rainProb}% chance of rain, about ${"%.1f".format(Locale.ENGLISH, d.rainSum)} mm. Better take an umbrella.")
+                val snowNote = if (d.snowProb >= 30) t(lang, " Schnee ist mit ${d.snowProb} % auch möglich.", " Snow is also possible (${d.snowProb}%).") else ""
+                (if (wet) t(lang, "Ja, $dayName liegt die Regenwahrscheinlichkeit $where bei ${d.rainProb} %, etwa ${n1(d.rainSum)} mm. Nimm lieber einen Schirm mit.",
+                    "Yes, $dayName $where there's a ${d.rainProb}% chance of rain, about ${n1(d.rainSum)} mm. Better take an umbrella.")
                 else if (d.rainProb >= 25) t(lang, "Eher nicht, aber $dayName gibt es $where eine Regenwahrscheinlichkeit von ${d.rainProb} %.",
                     "Probably not, but $dayName there's a ${d.rainProb}% chance of rain $where.")
-                else t(lang, "Nein, $dayName bleibt es $where trocken – ${WeatherService.describe(d.code, false)}.",
-                    "No, $dayName it should stay dry $where – ${WeatherService.describe(d.code, true)}.")
-            }
-            askSnow -> {
-                if (WeatherService.isSnow(d.code)) t(lang, "Ja, $dayName ist $where ${WeatherService.describe(d.code, false)} angesagt, bei ${deg(d.tMin)} bis ${deg(d.tMax)} Grad.",
-                    "Yes, $dayName $where expect ${WeatherService.describe(d.code, true)}, ${deg(d.tMin)} to ${deg(d.tMax)} degrees.")
-                else t(lang, "Nein, Schnee ist $dayName $where nicht angesagt. Es wird ${WeatherService.describe(d.code, false)} bei ${deg(d.tMin)} bis ${deg(d.tMax)} Grad.",
-                    "No snow expected $dayName $where. It'll be ${WeatherService.describe(d.code, true)}, ${deg(d.tMin)} to ${deg(d.tMax)} degrees.")
+                else t(lang, "Nein, $dayName bleibt es $where voraussichtlich trocken (${d.rainProb} %) – ${cond(d.code)}.",
+                    "No, $dayName it should stay dry $where (${d.rainProb}%) – ${cond(d.code)}.")) + snowNote
             }
             dayOffset == 0 -> t(lang,
-                "$where hat es gerade ${deg(f.currentTemp)} Grad, ${WeatherService.describe(f.currentCode, false)}. Heute ${deg(d.tMin)} bis ${deg(d.tMax)} Grad" +
-                    (if (d.rainProb >= 30) ", Regenwahrscheinlichkeit ${d.rainProb} %." else "."),
-                "It's currently ${deg(f.currentTemp)} degrees $where, ${WeatherService.describe(f.currentCode, true)}. Today ${deg(d.tMin)} to ${deg(d.tMax)} degrees" +
-                    (if (d.rainProb >= 30) ", ${d.rainProb}% chance of rain." else ".")
+                "$where hat es gerade ${deg(f.currentTemp)} Grad, gefühlt ${deg(f.currentFeels)}, ${cond(f.currentCode)}. " +
+                    "Heute ${deg(d.tMin)} bis ${deg(d.tMax)} Grad, ${extras(d)}.",
+                "It's currently ${deg(f.currentTemp)} degrees $where, feels like ${deg(f.currentFeels)}, ${cond(f.currentCode)}. " +
+                    "Today ${deg(d.tMin)} to ${deg(d.tMax)} degrees, ${extras(d)}."
             ).replaceFirstChar { it.uppercase() }
             else -> t(lang,
-                "${dayName.replaceFirstChar { it.uppercase() }} $where: ${WeatherService.describe(d.code, false)}, ${deg(d.tMin)} bis ${deg(d.tMax)} Grad" +
-                    (if (d.rainProb >= 30) ", Regenwahrscheinlichkeit ${d.rainProb} %." else "."),
-                "${dayName.replaceFirstChar { it.uppercase() }} $where: ${WeatherService.describe(d.code, true)}, ${deg(d.tMin)} to ${deg(d.tMax)} degrees" +
-                    (if (d.rainProb >= 30) ", ${d.rainProb}% chance of rain." else ".")
+                "${dayName.replaceFirstChar { it.uppercase() }} $where: ${cond(d.code)}, ${deg(d.tMin)} bis ${deg(d.tMax)} Grad, ${extras(d)}.",
+                "${dayName.replaceFirstChar { it.uppercase() }} $where: ${cond(d.code)}, ${deg(d.tMin)} to ${deg(d.tMax)} degrees, ${extras(d)}."
             )
         }
 
         val lines = f.days.take(5).map { day ->
             val label = day.date.dayOfWeek.getDisplayName(java.time.format.TextStyle.SHORT, if (en) Locale.ENGLISH else Locale.GERMAN)
-            "$label  ${deg(day.tMin)}° / ${deg(day.tMax)}°  ·  ${WeatherService.describe(day.code, en)}" +
-                (if (day.rainProb >= 20) "  ·  ${day.rainProb} %" else "")
+            "$label  ${deg(day.tMin)}° / ${deg(day.tMax)}°  ·  ${cond(day.code)}"
         }
         val title = (if (p.name == "hier") t(lang, "Wetter", "Weather") else p.name) + " · ${deg(f.currentTemp)}°"
-        return Reply(answer, lang, CardKind.WEATHER, title, lines)
+        return Reply(answer, lang, CardKind.WEATHER, title, lines, weather = f, weatherDay = dayOffset.coerceAtMost(f.days.size - 1))
     }
 
     // ================= Einkaufsliste =================
