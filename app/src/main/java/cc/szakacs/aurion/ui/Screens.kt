@@ -110,7 +110,7 @@ fun ChatScreen(vm: AssistantViewModel) {
     val listState = rememberLazyListState()
 
     LaunchedEffect(chat.size, st.orb, st.reply, st.streaming?.length?.div(80)) {
-        val count = chat.size + (if (st.orb != OrbState.IDLE || st.streaming != null) 1 else 0) + (if (st.reply?.weather != null) 1 else 0)
+        val count = chat.size + (if (st.orb != OrbState.IDLE || st.streaming != null) 1 else 0) + (if (st.reply?.weather != null || st.reply?.shopping != null) 1 else 0)
         if (count > 0) listState.animateScrollToItem(count - 1)
     }
 
@@ -139,8 +139,8 @@ fun ChatScreen(vm: AssistantViewModel) {
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 items(chat) { Bubble(it) }
-                st.reply?.takeIf { it.weather != null && st.orb != OrbState.THINKING && chat.isNotEmpty() }?.let { r ->
-                    item { ReplyCard(r, Modifier.fillMaxWidth(), showText = false) }
+                st.reply?.takeIf { (it.weather != null || it.shopping != null) && st.orb != OrbState.THINKING && chat.isNotEmpty() }?.let { r ->
+                    item { ReplyCard(r, Modifier.fillMaxWidth(), showText = false, onCheckItem = { vm.checkOffShopping(it) }) }
                 }
                 if (st.streaming != null && st.lens == null) {
                     item { Bubble(ChatMessage(false, st.streaming!!.ifBlank { "…" })) }

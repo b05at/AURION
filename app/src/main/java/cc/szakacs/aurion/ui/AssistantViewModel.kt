@@ -198,6 +198,14 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
         if (LlmEngine.get(ctx).isAvailable) submit(if (text.length > 400) "Fasse das kurz zusammen." else "Erkläre kurz, worum es hier geht.", spoken = false)
     }
 
+    /** Artikel in Bring! abhaken (aus der Einkaufskarte) */
+    fun checkOffShopping(name: String) {
+        viewModelScope.launch {
+            runCatching { cc.szakacs.aurion.bring.BringClient(settings).removeItem(name) }
+                .onFailure { _state.value = _state.value.copy(hint = "Bring!: ${it.message}") }
+        }
+    }
+
     fun closeLens() {
         _state.value = _state.value.copy(lens = null)
     }

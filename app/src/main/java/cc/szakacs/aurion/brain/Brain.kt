@@ -37,6 +37,15 @@ data class Reply(
     val cardLines: List<String> = emptyList(),
     val weather: cc.szakacs.aurion.weather.Forecast? = null,
     val weatherDay: Int = 0,
+    /** Einkaufsliste für die Karte: ganze Liste, neu hinzugefügte und entfernte Artikel */
+    val shopping: ShoppingView? = null,
+)
+
+data class ShoppingView(
+    val listName: String,
+    val items: List<BringItem>,
+    val added: Set<String> = emptySet(),
+    val removed: List<String> = emptyList(),
 )
 
 /**
@@ -187,8 +196,10 @@ class Brain(private val ctx: Context) {
             val items = parseItems(text)
             if (items.isNotEmpty()) {
                 items.forEach { bring.removeItem(it.name) }
+                val rest = runCatching { bring.items() }.getOrDefault(emptyList())
                 return Reply(t(lang, "${joinNames(items, lang)} von der Liste genommen.", "Removed ${joinNames(items, lang)} from the list."), lang,
-                    CardKind.SHOPPING, "Bring!", items.map { "– ${it.name}" })
+                    CardKind.SHOPPING, "Bring!", items.map { "– ${it.name}" },
+                    shopping = ShoppingView(settings.bringListName ?: "Bring!", rest, removed = items.map { it.name }))
             }
         }
         if (mentionsList || Regex("^(kauf\\w*|wir brauchen|ich brauche|we need|i need|buy)\\b").containsMatchIn(l)) {
@@ -449,7 +460,12 @@ class Brain(private val ctx: Context) {
         return Reply(
             t(lang, "${joinNames(items, lang)} ${if (items.size == 1) "steht" else "stehen"} jetzt auf der Liste.",
                 "Added ${joinNames(items, lang)} to your list."), lang,
-            CardKind.SHOPPING, list, items.map { if (it.spec.isBlank()) it.name else "${it.name} · ${it.spec}" }
+            CardKind.SHOPPING, list, items.map { if (it.spec.isBlank()) it.name else "${it.name} · ${it.spec}" },
+            shopping = ShoppingView(
+                list,
+                runCatching { bring.items() }.getOrNull()?.takeIf { it.isNotEmpty() } ?: items,
+                added = items.map { it.name.lowercase() }.toSet()
+            )
         )
     }
 
@@ -460,7 +476,8 @@ class Brain(private val ctx: Context) {
         return Reply(
             t(lang, "Auf der Liste: ${joinNames(items, lang)}.", "On your list: ${joinNames(items, lang)}."), lang,
             CardKind.SHOPPING, settings.bringListName ?: "Bring!",
-            items.map { if (it.spec.isBlank()) it.name else "${it.name} · ${it.spec}" }
+            items.map { if (it.spec.isBlank()) it.name else "${it.name} · ${it.spec}" },
+            shopping = ShoppingView(settings.bringListName ?: "Bring!", items)
         )
     }
 

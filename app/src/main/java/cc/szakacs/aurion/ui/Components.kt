@@ -54,7 +54,19 @@ fun GlassCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.()
 }
 
 @Composable
-fun ReplyCard(reply: Reply, modifier: Modifier = Modifier, showText: Boolean = true) {
+fun ReplyCard(reply: Reply, modifier: Modifier = Modifier, showText: Boolean = true, onCheckItem: ((String) -> Unit)? = null) {
+    if (reply.shopping != null) {
+        Column(modifier) {
+            ShoppingCard(reply.shopping, onCheck = { onCheckItem?.invoke(it) }, modifier = Modifier.fillMaxWidth())
+            if (showText) {
+                Spacer(Modifier.size(12.dp))
+                GlassCard(Modifier.fillMaxWidth()) {
+                    Text(reply.text, style = MaterialTheme.typography.bodyLarge, color = AurionColors.TextHigh)
+                }
+            }
+        }
+        return
+    }
     if (reply.weather != null) {
         Column(modifier) {
             WeatherCard(reply.weather, reply.weatherDay, Modifier.fillMaxWidth())

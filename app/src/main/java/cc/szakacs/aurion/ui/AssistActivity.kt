@@ -270,7 +270,7 @@ private fun AssistOverlay(vm: AssistantViewModel, onClose: () -> Unit, onOpenApp
                 } else {
                     st.reply?.let { reply ->
                         Box(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
-                            ReplyCard(reply, Modifier.fillMaxWidth())
+                            ReplyCard(reply, Modifier.fillMaxWidth(), onCheckItem = { vm.checkOffShopping(it) })
                         }
                         Spacer(Modifier.height(14.dp))
                     }
