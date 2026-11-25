@@ -91,6 +91,7 @@ import cc.szakacs.aurion.ui.theme.AurionColors
 import cc.szakacs.aurion.update.UpdateInfo
 import cc.szakacs.aurion.update.Updater
 import cc.szakacs.aurion.voice.Speaker
+import cc.szakacs.aurion.weather.WeatherService
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
@@ -412,6 +413,10 @@ fun SettingsScreen(tick: Int) {
         SectionTitle("Stimme")
         VoiceSection()
 
+        // ---------- Wetter ----------
+        SectionTitle("Wetter")
+        WeatherSection(tick)
+
         // ---------- Sprachmodell ----------
         SectionTitle("Lokales Sprachmodell")
         ModelSection()
@@ -550,6 +555,57 @@ private fun VoiceRow(title: String, subtitle: String, selected: Boolean, onClick
             Text(subtitle, color = AurionColors.TextMid, style = MaterialTheme.typography.bodyMedium)
         }
         Icon(Icons.Rounded.PlayArrow, "Anhören", tint = AurionColors.TextMid)
+    }
+}
+
+@Composable
+private fun WeatherSection(tick: Int) {
+    val ctx = LocalContext.current
+    val settings = Settings.get(ctx)
+    val scope = rememberCoroutineScope()
+    var useDevice by remember { mutableStateOf(settings.weatherUseDevice) }
+    var placeName by remember { mutableStateOf(settings.weatherPlaceName) }
+    var input by remember { mutableStateOf("") }
+    var msg by remember { mutableStateOf<String?>(null) }
+    val locPerm = remember(tick) { WeatherService.hasLocationPermission(ctx) }
+
+    GlassCard(Modifier.fillMaxWidth()) {
+        Text(
+            "Kostenlos über Open-Meteo – ohne Konto, ohne API-Schlüssel. Frag z. B. „Wie wird das Wetter morgen?“ oder „Brauche ich heute einen Schirm?“",
+            style = MaterialTheme.typography.bodyMedium, color = AurionColors.TextMid
+        )
+        ToggleRow("Aktuellen Standort verwenden", useDevice) { useDevice = it; settings.weatherUseDevice = it }
+        if (useDevice) {
+            StatusRow(
+                "Standort", if (locPerm) "Ungefährer Standort erlaubt" else "Berechtigung fehlt – sonst wird der feste Ort genutzt",
+                locPerm, if (locPerm) null else "Erlauben"
+            ) { openAppSettings(ctx) }
+        }
+        Text(
+            if (useDevice) "Ersatz-Ort, falls kein Standort verfügbar ist:" else "Fester Ort für das Wetter:",
+            color = AurionColors.TextMid, modifier = Modifier.padding(top = 10.dp)
+        )
+        placeName?.let { Text("Aktuell: $it", color = AurionColors.Cyan, modifier = Modifier.padding(top = 4.dp)) }
+        Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                input, { input = it }, Modifier.weight(1f), placeholder = { Text("Ort oder PLZ") }, singleLine = true,
+                shape = RoundedCornerShape(14.dp), colors = fieldColors()
+            )
+            Spacer(Modifier.size(8.dp))
+            SecondaryButton("Setzen", enabled = input.isNotBlank()) {
+                scope.launch {
+                    val p = WeatherService.geocode(input)
+                    if (p == null) msg = "Ort nicht gefunden"
+                    else {
+                        settings.weatherPlaceName = p.name
+                        settings.weatherLat = p.lat
+                        settings.weatherLon = p.lon
+                        placeName = p.name; input = ""; msg = null
+                    }
+                }
+            }
+        }
+        msg?.let { Text(it, color = AurionColors.Amber, modifier = Modifier.padding(top = 6.dp)) }
     }
 }
 

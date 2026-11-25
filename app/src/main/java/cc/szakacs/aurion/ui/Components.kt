@@ -20,6 +20,7 @@ import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.Psychology
 import androidx.compose.material.icons.rounded.ShoppingBasket
+import androidx.compose.material.icons.rounded.WbSunny
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -71,6 +72,7 @@ fun ReplyCard(reply: Reply, modifier: Modifier = Modifier) {
                             CardKind.REMINDER -> Icons.Rounded.NotificationsActive
                             CardKind.SHOPPING -> Icons.Rounded.ShoppingBasket
                             CardKind.MEMORY -> Icons.Rounded.Psychology
+                            CardKind.WEATHER -> Icons.Rounded.WbSunny
                             CardKind.NONE -> Icons.Rounded.AutoAwesome
                         }
                     )

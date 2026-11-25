@@ -38,6 +38,23 @@ class Settings private constructor(private val p: SharedPreferences) {
         get() = p.getFloat("speechRate", 1.05f)
         set(v) = p.edit().putFloat("speechRate", v).apply()
 
+    // ---- Wetter ----
+    var weatherUseDevice: Boolean
+        get() = p.getBoolean("wxDevice", true)
+        set(v) = p.edit().putBoolean("wxDevice", v).apply()
+
+    var weatherPlaceName: String?
+        get() = p.getString("wxName", null)
+        set(v) = p.edit().putString("wxName", v).apply()
+
+    var weatherLat: Double
+        get() = p.getString("wxLat", "0")!!.toDouble()
+        set(v) = p.edit().putString("wxLat", v.toString()).apply()
+
+    var weatherLon: Double
+        get() = p.getString("wxLon", "0")!!.toDouble()
+        set(v) = p.edit().putString("wxLon", v.toString()).apply()
+
     var modelPath: String?
         get() = p.getString("modelPath", null)
         set(v) = p.edit().putString("modelPath", v).apply()

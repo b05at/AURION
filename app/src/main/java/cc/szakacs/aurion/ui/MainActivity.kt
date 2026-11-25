@@ -119,6 +119,7 @@ private fun AurionMain(vm: AssistantViewModel, tick: Int, requestedTab: String?,
     LaunchedEffect(Unit) {
         val perms = buildList {
             add(Manifest.permission.RECORD_AUDIO)
+            add(Manifest.permission.ACCESS_COARSE_LOCATION)
             if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
         }
         permLauncher.launch(perms.toTypedArray())

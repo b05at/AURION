@@ -10,6 +10,7 @@ import cc.szakacs.aurion.data.Store
 import cc.szakacs.aurion.llm.LlmEngine
 import cc.szakacs.aurion.llm.Turn
 import cc.szakacs.aurion.reminders.Reminders
+import cc.szakacs.aurion.weather.WeatherService
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.LocalDateTime
@@ -17,7 +18,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-enum class CardKind { REMINDER, SHOPPING, MEMORY, NONE }
+enum class CardKind { REMINDER, SHOPPING, MEMORY, WEATHER, NONE }
 
 data class Reply(
     val text: String,
@@ -99,6 +100,13 @@ class Brain(private val ctx: Context) {
                 t(lang, "Heute ist ${now.format(DateTimeFormatter.ofPattern("EEEE, d. MMMM yyyy", Locale.GERMAN))}.",
                     "Today is ${now.format(DateTimeFormatter.ofPattern("EEEE, MMMM d, yyyy", Locale.ENGLISH))}."), lang
             )
+        }
+
+        // --- Wetter ---
+        if (Regex("wetter|regnen|regnet|\\bregen\\b|schneien|schneit|\\bschnee\\b|gewitter|wie warm|wie kalt|grad hat es|temperatur|regenschirm|\\bschirm\\b|sonnig|vorhersage|weather|\\brain\\b|raining|\\bsnow|temperature|how warm|how cold|umbrella|forecast|sunny").containsMatchIn(l)
+            && !Regex("erinner|remind").containsMatchIn(l)
+        ) {
+            return weather(text, l, lang)
         }
 
         // --- Erinnerungen auflisten ---
@@ -226,6 +234,99 @@ class Brain(private val ctx: Context) {
         return r.replaceFirstChar { it.uppercase() }
     }
 
+    // ================= Wetter =================
+
+    private val dayWords = "heute|today|morgen|tomorrow|übermorgen|day after tomorrow|montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonntag|monday|tuesday|wednesday|thursday|friday|saturday|sunday|am wochenende|this weekend|früh|abend|nachmittag|vormittag|morning|evening|afternoon|tonight|jetzt|now|gerade|draußen|outside"
+
+    private suspend fun weather(text: String, l: String, lang: String): Reply {
+        val en = lang == "en"
+        // Tag bestimmen
+        val today = java.time.LocalDate.now()
+        var dayOffset = 0
+        when {
+            Regex("übermorgen|day after tomorrow").containsMatchIn(l) -> { dayOffset = 2 }
+            Regex("(?<!heute |guten )\\bmorgen\\b|tomorrow").containsMatchIn(l) -> { dayOffset = 1 }
+            else -> {
+                val names = listOf("montag" to 1, "dienstag" to 2, "mittwoch" to 3, "donnerstag" to 4, "freitag" to 5, "samstag" to 6, "sonntag" to 7,
+                    "monday" to 1, "tuesday" to 2, "wednesday" to 3, "thursday" to 4, "friday" to 5, "saturday" to 6, "sunday" to 7)
+                names.firstOrNull { Regex("\\b${it.first}\\b").containsMatchIn(l) }?.let { (_, dow) ->
+                    dayOffset = ((dow - today.dayOfWeek.value) + 7) % 7
+                }
+            }
+        }
+        if (dayOffset > 6) dayOffset = 6
+
+        // Ort bestimmen ("in Wien", "für Graz", "in London")
+        var place: cc.szakacs.aurion.weather.Place? = null
+        Regex("\\b(?:in|für|for|at)\\s+([\\p{L}][\\p{L} .\\-]*)", RegexOption.IGNORE_CASE).findAll(text).forEach { m ->
+            if (place != null) return@forEach
+            var name = m.groupValues[1]
+            name = name.replace(Regex("\\b($dayWords)\\b.*$", RegexOption.IGNORE_CASE), "")
+                .replace(Regex("\\b(wetter|weather|wie|how|is|ist|es|it|wird|will|be|sein|regnen|rain|schneien|snow|werden)\\b.*$", RegexOption.IGNORE_CASE), "")
+                .trim().trimEnd('?', '.', '!', ',').trim()
+            val skip = setOf("der", "die", "das", "the", "der früh", "the morning", "")
+            if (name.lowercase() !in skip && name.length >= 2) place = WeatherService.geocode(name, lang)
+        }
+        if (place == null) place = WeatherService.homePlace(ctx)
+        val p = place ?: return Reply(
+            t(lang, "Ich weiß nicht, wo du bist. Erlaube den Standort oder lege in den Einstellungen einen Wetter-Ort fest.",
+                "I don't know where you are. Allow location access or set a weather location in settings."), lang
+        )
+
+        val f = WeatherService.forecast(p)
+        val d = f.days.getOrNull(dayOffset) ?: f.days.first()
+        val dayName = when (dayOffset) {
+            0 -> t(lang, "heute", "today")
+            1 -> t(lang, "morgen", "tomorrow")
+            2 -> t(lang, "übermorgen", "the day after tomorrow")
+            else -> t(lang, "am ", "on ") + d.date.dayOfWeek.getDisplayName(java.time.format.TextStyle.FULL, if (en) Locale.ENGLISH else Locale.GERMAN)
+        }
+        val where = if (p.name == "hier") t(lang, "hier", "here") else t(lang, "in ${p.name}", "in ${p.name}")
+        val deg = WeatherService::deg
+
+        val askRain = Regex("regnen|regnet|\\bregen\\b|schirm|\\brain\\b|raining|umbrella|nass|wet").containsMatchIn(l)
+        val askSnow = Regex("schneien|schneit|\\bschnee\\b|\\bsnow").containsMatchIn(l)
+        val askTemp = Regex("wie warm|wie kalt|grad|temperatur|how warm|how cold|temperature").containsMatchIn(l)
+
+        val answer = when {
+            askRain -> {
+                val wet = WeatherService.isWet(d.code) || d.rainProb >= 50
+                if (wet) t(lang, "Ja, $dayName $where liegt die Regenwahrscheinlichkeit bei ${d.rainProb} %, etwa ${"%.1f".format(d.rainSum)} mm. Nimm lieber einen Schirm mit.",
+                    "Yes, $dayName $where there's a ${d.rainProb}% chance of rain, about ${"%.1f".format(Locale.ENGLISH, d.rainSum)} mm. Better take an umbrella.")
+                else if (d.rainProb >= 25) t(lang, "Eher nicht, aber $dayName gibt es $where eine Regenwahrscheinlichkeit von ${d.rainProb} %.",
+                    "Probably not, but $dayName there's a ${d.rainProb}% chance of rain $where.")
+                else t(lang, "Nein, $dayName bleibt es $where trocken – ${WeatherService.describe(d.code, false)}.",
+                    "No, $dayName it should stay dry $where – ${WeatherService.describe(d.code, true)}.")
+            }
+            askSnow -> {
+                if (WeatherService.isSnow(d.code)) t(lang, "Ja, $dayName ist $where ${WeatherService.describe(d.code, false)} angesagt, bei ${deg(d.tMin)} bis ${deg(d.tMax)} Grad.",
+                    "Yes, $dayName $where expect ${WeatherService.describe(d.code, true)}, ${deg(d.tMin)} to ${deg(d.tMax)} degrees.")
+                else t(lang, "Nein, Schnee ist $dayName $where nicht angesagt. Es wird ${WeatherService.describe(d.code, false)} bei ${deg(d.tMin)} bis ${deg(d.tMax)} Grad.",
+                    "No snow expected $dayName $where. It'll be ${WeatherService.describe(d.code, true)}, ${deg(d.tMin)} to ${deg(d.tMax)} degrees.")
+            }
+            dayOffset == 0 -> t(lang,
+                "$where hat es gerade ${deg(f.currentTemp)} Grad, ${WeatherService.describe(f.currentCode, false)}. Heute ${deg(d.tMin)} bis ${deg(d.tMax)} Grad" +
+                    (if (d.rainProb >= 30) ", Regenwahrscheinlichkeit ${d.rainProb} %." else "."),
+                "It's currently ${deg(f.currentTemp)} degrees $where, ${WeatherService.describe(f.currentCode, true)}. Today ${deg(d.tMin)} to ${deg(d.tMax)} degrees" +
+                    (if (d.rainProb >= 30) ", ${d.rainProb}% chance of rain." else ".")
+            ).replaceFirstChar { it.uppercase() }
+            else -> t(lang,
+                "${dayName.replaceFirstChar { it.uppercase() }} $where: ${WeatherService.describe(d.code, false)}, ${deg(d.tMin)} bis ${deg(d.tMax)} Grad" +
+                    (if (d.rainProb >= 30) ", Regenwahrscheinlichkeit ${d.rainProb} %." else "."),
+                "${dayName.replaceFirstChar { it.uppercase() }} $where: ${WeatherService.describe(d.code, true)}, ${deg(d.tMin)} to ${deg(d.tMax)} degrees" +
+                    (if (d.rainProb >= 30) ", ${d.rainProb}% chance of rain." else ".")
+            )
+        }
+
+        val lines = f.days.take(5).map { day ->
+            val label = day.date.dayOfWeek.getDisplayName(java.time.format.TextStyle.SHORT, if (en) Locale.ENGLISH else Locale.GERMAN)
+            "$label  ${deg(day.tMin)}° / ${deg(day.tMax)}°  ·  ${WeatherService.describe(day.code, en)}" +
+                (if (day.rainProb >= 20) "  ·  ${day.rainProb} %" else "")
+        }
+        val title = (if (p.name == "hier") t(lang, "Wetter", "Weather") else p.name) + " · ${deg(f.currentTemp)}°"
+        return Reply(answer, lang, CardKind.WEATHER, title, lines)
+    }
+
     // ================= Einkaufsliste =================
 
     private suspend fun addShopping(items: List<BringItem>, lang: String): Reply {
@@ -308,7 +409,7 @@ class Brain(private val ctx: Context) {
             Du bist Aurion, ein privater Sprachassistent, der vollständig lokal auf einem Android-Smartphone läuft.
             Du bist freundlich, präzise und kommst schnell auf den Punkt. Deine Antworten werden vorgelesen:
             antworte in höchstens drei kurzen Sätzen, ohne Markdown, ohne Listen, ohne Emojis.
-            Erfinde keine Fakten; wenn du etwas nicht weißt (z. B. Live-Daten wie Wetter oder Nachrichten), sag es ehrlich.
+            Erfinde keine Fakten; wenn du etwas nicht weißt (z. B. Live-Daten wie Nachrichten), sag es ehrlich.
             Aktuelles Datum und Uhrzeit: ${now.format(DateTimeFormatter.ofPattern("EEEE, d. MMMM yyyy, HH:mm", Locale.GERMAN))}.
             $languageRule$memText
         """.trimIndent()

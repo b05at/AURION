@@ -7,6 +7,8 @@ Privater, lokaler Sprachassistent für Android – Deutsch & Englisch.
 - **Erinnerungen** mit dauerhafter Benachrichtigung, bis sie per Button **„Quittieren“** bestätigt werden
   (Wegwischen bringt sie still zurück, Neustart-fest, „10 Min später“-Button)
 - **Bring!-Einkaufsliste**: Artikel hinzufügen, entfernen, vorlesen
+- **Wetter** kostenlos über Open-Meteo (Standort oder fester Ort, auch „Wetter in Wien“)
+- **Stimmenauswahl** für Deutsch und Englisch, Sprechtempo einstellbar
 - **Gedächtnis**: „Merk dir …“ / „Remember that …“ – fließt in alle Antworten ein
 - Siri-artiges Overlay mit animiertem Orb im Aurion-Look
 
@@ -33,6 +35,7 @@ APK aus den [Releases](https://github.com/b05at/AURION/releases) installieren. U
 | Was steht auf der Einkaufsliste? | What's on my shopping list? |
 | Merk dir, dass mein Auto in der Tiefgarage steht | Remember that my car is parked in the garage |
 | Welche Erinnerungen habe ich? | What reminders do I have? |
+| Wie wird das Wetter morgen? | Will it rain tomorrow in London? |
 
 ## Technik
 
