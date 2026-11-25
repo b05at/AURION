@@ -15,6 +15,7 @@ data class ModelOption(
     val url: String,
     val fileName: String,
     val sizeLabel: String,
+    val needsToken: Boolean = false,
 )
 
 data class DownloadState(val running: Boolean, val progress: Float, val done: Boolean, val failed: Boolean)
@@ -23,6 +24,15 @@ data class DownloadState(val running: Boolean, val progress: Float, val done: Bo
 object ModelManager {
 
     val options = listOf(
+        ModelOption(
+            id = "gemma3n-e2b",
+            title = "Gemma 3n · E2B (sieht Bilder)",
+            description = "Versteht Bilder & Bildschirm direkt, beste Qualität – braucht HF-Token + Lizenz-Zustimmung",
+            url = "https://huggingface.co/google/gemma-3n-E2B-it-litert-preview/resolve/main/gemma-3n-E2B-it-int4.task",
+            fileName = "gemma-3n-E2B-it-int4.task",
+            sizeLabel = "≈ 3,1 GB",
+            needsToken = true,
+        ),
         ModelOption(
             id = "qwen25-15b",
             title = "Qwen 2.5 · 1.5B (empfohlen)",
@@ -59,6 +69,7 @@ object ModelManager {
             .setDestinationUri(Uri.fromFile(target))
             .setAllowedOverMetered(true)
         val s = Settings.get(ctx)
+        s.hfToken?.takeIf { it.isNotBlank() }?.let { req.addRequestHeader("Authorization", "Bearer ${it.trim()}") }
         s.downloadId = dm.enqueue(req)
         s.downloadTarget = target.absolutePath
     }

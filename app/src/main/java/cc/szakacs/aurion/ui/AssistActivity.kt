@@ -58,6 +58,38 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.ClipOp
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.ShaderBrush
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
+import cc.szakacs.aurion.assist.ScreenContext
+import cc.szakacs.aurion.vision.Vision
 import cc.szakacs.aurion.assist.AurionSession
 import cc.szakacs.aurion.data.Settings
 import cc.szakacs.aurion.ui.theme.AurionColors
@@ -130,36 +162,90 @@ class AssistActivity : ComponentActivity() {
 @Composable
 private fun AssistOverlay(vm: AssistantViewModel, onClose: () -> Unit, onOpenApp: () -> Unit) {
     val st by vm.state.collectAsState()
+    val shot by ScreenContext.screenshot.collectAsState()
     var typing by remember { mutableStateOf(false) }
     var input by remember { mutableStateOf("") }
     var visible by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { visible = true }
 
-    // Automatisch schließen, wenn längere Zeit nichts passiert
-    LaunchedEffect(st.orb, st.reply, typing) {
-        if (st.orb == OrbState.IDLE && !typing) {
-            delay(if (st.reply != null) 12_000 else 8_000)
+    // Einkreisen
+    val points = remember { mutableStateListOf<Offset>() }
+    var selection by remember { mutableStateOf<Rect?>(null) }
+    var boxSize by remember { mutableStateOf(IntSize.Zero) }
+
+    // Automatisch schließen, wenn längere Zeit nichts passiert (nicht während der Lupe)
+    LaunchedEffect(st.orb, st.reply, typing, st.lens, shot) {
+        if (st.orb == OrbState.IDLE && !typing && st.lens == null) {
+            delay(if (shot != null) 25_000 else if (st.reply != null) 12_000 else 8_000)
             onClose()
         }
     }
 
-    Box(
-        Modifier
-            .fillMaxSize()
-            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onClose() }
-    ) {
-        // Abdunkelnder Verlauf von unten
-        Box(
-            Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        0f to Color.Transparent,
-                        0.35f to Color(0x66000000),
-                        1f to Color(0xF2050814),
+    fun clearSelection() {
+        points.clear(); selection = null; vm.closeLens()
+    }
+
+    Box(Modifier.fillMaxSize().onSizeChanged { boxSize = it }) {
+        val screenshot = shot
+        if (screenshot != null) {
+            // Eingefrorener Bildschirm – darauf kann eingekreist werden (wie "Circle to Search")
+            Image(screenshot.asImageBitmap(), null, contentScale = ContentScale.FillBounds, modifier = Modifier.fillMaxSize())
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .pointerInput(screenshot) {
+                        detectTapGestures(onTap = { if (st.lens == null && selection == null) onClose() else clearSelection() })
+                    }
+                    .pointerInput(screenshot) {
+                        detectDragGestures(
+                            onDragStart = { points.clear(); points.add(it); selection = null; vm.closeLens() },
+                            onDrag = { change, _ -> points.add(change.position) },
+                            onDragEnd = {
+                                if (points.size > 3) {
+                                    val pad = 24f
+                                    var r = Rect(
+                                        points.minOf { it.x } - pad, points.minOf { it.y } - pad,
+                                        points.maxOf { it.x } + pad, points.maxOf { it.y } + pad
+                                    )
+                                    // Zu kleine Auswahl (Strich) etwas aufziehen
+                                    if (r.height < 80f) r = Rect(r.left, r.center.y - 60f, r.right, r.center.y + 60f)
+                                    if (r.width < 80f) r = Rect(r.center.x - 60f, r.top, r.center.x + 60f, r.bottom)
+                                    selection = r
+                                    if (boxSize.width > 0) {
+                                        val sx = screenshot.width.toFloat() / boxSize.width
+                                        val sy = screenshot.height.toFloat() / boxSize.height
+                                        val crop = Vision.crop(
+                                            screenshot,
+                                            android.graphics.Rect((r.left * sx).toInt(), (r.top * sy).toInt(), (r.right * sx).toInt(), (r.bottom * sy).toInt())
+                                        )
+                                        typing = false
+                                        vm.analyzeImage(crop)
+                                    }
+                                }
+                            }
+                        )
+                    }
+            ) {
+                SelectionLayer(points, selection)
+            }
+        } else {
+            // Ohne Screenshot: dezenter Verlauf, Tippen schließt
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onClose() }
+                    .background(
+                        Brush.verticalGradient(
+                            0f to Color.Transparent,
+                            0.35f to Color(0x66000000),
+                            1f to Color(0xF2050814),
+                        )
                     )
-                )
-        )
+            )
+        }
+
+        // Leuchtender Rand, solange Aurion zuhört/denkt oder den Bildschirm "sieht"
+        if (st.orb != OrbState.IDLE || (screenshot != null && selection == null)) EdgeGlow()
 
         AnimatedVisibility(
             visible = visible,
@@ -170,20 +256,33 @@ private fun AssistOverlay(vm: AssistantViewModel, onClose: () -> Unit, onOpenApp
             Column(
                 Modifier
                     .fillMaxWidth()
+                    .then(if (screenshot != null) Modifier.background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xCC050814)))) else Modifier)
                     .navigationBarsPadding()
                     .imePadding()
-                    .padding(horizontal = 20.dp, vertical = 16.dp)
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
                     .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { },
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                st.reply?.let { reply ->
-                    ReplyCard(reply, Modifier.fillMaxWidth())
-                    Spacer(Modifier.height(18.dp))
+                val lens = st.lens
+                if (lens != null) {
+                    LensCard(lens, vm, Modifier.fillMaxWidth()) { clearSelection() }
+                    Spacer(Modifier.height(12.dp))
+                } else {
+                    st.reply?.let { reply ->
+                        Box(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                            ReplyCard(reply, Modifier.fillMaxWidth())
+                        }
+                        Spacer(Modifier.height(14.dp))
+                    }
+                    st.streaming?.let { s ->
+                        GlassCard(Modifier.fillMaxWidth()) { MarkdownText(s) }
+                        Spacer(Modifier.height(14.dp))
+                    }
                 }
 
                 // Nur echtes Transkript bzw. Fehlerhinweis – keine Platzhaltertexte
                 val shown = when {
-                    st.transcript.isNotBlank() -> st.transcript
+                    st.transcript.isNotBlank() && lens == null -> st.transcript
                     st.hint != null -> st.hint!!
                     else -> ""
                 }
@@ -195,7 +294,7 @@ private fun AssistOverlay(vm: AssistantViewModel, onClose: () -> Unit, onOpenApp
                         textAlign = TextAlign.Center,
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
                     )
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(10.dp))
                 }
 
                 if (typing) {
@@ -229,13 +328,13 @@ private fun AssistOverlay(vm: AssistantViewModel, onClose: () -> Unit, onOpenApp
                             Icon(Icons.AutoMirrored.Rounded.Send, "Senden", tint = AurionColors.Cyan)
                         }
                     }
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(10.dp))
                 }
 
                 // Nur der Orb: Tippen = zuhören/stoppen, lange drücken = Tastatur
                 Box(
                     Modifier
-                        .size(150.dp)
+                        .size(if (lens != null) 96.dp else 150.dp)
                         .combinedClickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null,
@@ -244,9 +343,69 @@ private fun AssistOverlay(vm: AssistantViewModel, onClose: () -> Unit, onOpenApp
                         ),
                     contentAlignment = Alignment.Center
                 ) {
-                    AurionOrb(st.orb, st.level, size = 150.dp)
+                    AurionOrb(st.orb, st.level, size = if (lens != null) 96.dp else 150.dp)
                 }
             }
+        }
+    }
+}
+
+/** Leuchtende Spur beim Einkreisen + abgedunkelter Rest nach der Auswahl */
+@Composable
+private fun SelectionLayer(points: List<Offset>, selection: Rect?) {
+    val t = rememberInfiniteTransition(label = "sel")
+    val phase by t.animateFloat(0f, 360f, infiniteRepeatable(tween(3000, easing = LinearEasing)), label = "phase")
+    Canvas(Modifier.fillMaxSize()) {
+        if (selection != null) {
+            val cut = Path().apply { addRoundRect(androidx.compose.ui.geometry.RoundRect(selection, CornerRadius(28f))) }
+            clipPath(cut, ClipOp.Difference) { drawRect(Color(0x8C000000)) }
+            val c = selection.center
+            val brush = ShaderBrush(
+                android.graphics.SweepGradient(
+                    c.x, c.y,
+                    intArrayOf(AurionColors.Blue.toArgb(), AurionColors.Cyan.toArgb(), Color.White.toArgb(), AurionColors.Indigo.toArgb(), AurionColors.Blue.toArgb()),
+                    null
+                ).apply { setLocalMatrix(android.graphics.Matrix().apply { setRotate(phase, c.x, c.y) }) }
+            )
+            drawRoundRect(brush, selection.topLeft, selection.size, CornerRadius(28f), style = Stroke(width = 10f), alpha = 0.35f)
+            drawRoundRect(brush, selection.topLeft, selection.size, CornerRadius(28f), style = Stroke(width = 4f))
+        }
+        if (points.size > 1) {
+            val path = Path().apply {
+                moveTo(points[0].x, points[0].y)
+                for (i in 1 until points.size) lineTo(points[i].x, points[i].y)
+            }
+            val alpha = if (selection != null) 0.5f else 1f
+            drawPath(path, AurionColors.Blue.copy(alpha = 0.35f * alpha), style = Stroke(width = 34f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+            drawPath(path, AurionColors.Cyan.copy(alpha = 0.7f * alpha), style = Stroke(width = 14f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+            drawPath(path, Color.White.copy(alpha = alpha), style = Stroke(width = 5f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+        }
+    }
+}
+
+/** Bildschirmrand leuchtet in Aurion-Farben (rotierender Verlauf) */
+@Composable
+private fun EdgeGlow() {
+    val t = rememberInfiniteTransition(label = "edge")
+    val rot by t.animateFloat(0f, 360f, infiniteRepeatable(tween(4000, easing = LinearEasing)), label = "rot")
+    Canvas(Modifier.fillMaxSize()) {
+        val colors = intArrayOf(
+            AurionColors.Blue.toArgb(), AurionColors.Cyan.toArgb(), AurionColors.Silver.toArgb(),
+            AurionColors.Indigo.toArgb(), AurionColors.Blue.toArgb()
+        )
+        val shader = android.graphics.SweepGradient(center.x, center.y, colors, null).apply {
+            setLocalMatrix(android.graphics.Matrix().apply { setRotate(rot, center.x, center.y) })
+        }
+        val brush = ShaderBrush(shader)
+        for ((w, a) in listOf(40f to 0.16f, 20f to 0.32f, 7f to 0.95f)) {
+            drawRoundRect(
+                brush,
+                topLeft = Offset(w / 2, w / 2),
+                size = Size(size.width - w, size.height - w),
+                cornerRadius = CornerRadius(56f),
+                style = Stroke(width = w),
+                alpha = a
+            )
         }
     }
 }

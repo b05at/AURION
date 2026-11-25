@@ -9,6 +9,14 @@ Privater, lokaler Sprachassistent für Android – Deutsch & Englisch.
 - **Bring!-Einkaufsliste**: Artikel hinzufügen, entfernen, vorlesen
 - **Wetter** kostenlos über Open-Meteo (Standort oder fester Ort, auch „Wetter in Wien“)
 - **Stimmenauswahl** für Deutsch und Englisch, Sprechtempo einstellbar
+- **Bildschirm-Lupe** (wie Circle to Search): Seitentaste → Bildschirm friert ein → etwas einkreisen →
+  Aurion erkennt Text & Objekte lokal (ML Kit), erklärt, übersetzt, fasst zusammen, wählt Nummern, öffnet Links,
+  setzt Dinge auf die Einkaufsliste. „Was ist das?“ fragt nach dem ganzen Bildschirm.
+- **Teilen an Aurion** / „Frag Aurion“ im Textmenü: Texte und Bilder aus jeder App
+- **Wie ein Chat-Assistent**: ausführliche, live geschriebene Antworten mit Markdown (getippt), kurze gesprochene Antworten (Sprache),
+  Texte schreiben, übersetzen, zusammenfassen, erklären, Code
+- **Gemma 3n** optional: versteht Bilder direkt (lokal)
+- **Exakter Rechner & Einheiten**, Apps öffnen, Taschenlampe, Wecker, Navigation, Kalendertermin, Nummer wählen, Zwischenablage
 - **Gedächtnis**: „Merk dir …“ / „Remember that …“ – fließt in alle Antworten ein
 - Siri-artiges Overlay mit animiertem Orb im Aurion-Look
 
@@ -36,6 +44,10 @@ APK aus den [Releases](https://github.com/b05at/AURION/releases) installieren. U
 | Merk dir, dass mein Auto in der Tiefgarage steht | Remember that my car is parked in the garage |
 | Welche Erinnerungen habe ich? | What reminders do I have? |
 | Wie wird das Wetter morgen? | Will it rain tomorrow in London? |
+| Was sind 17 % von 2340? | 5 miles in km |
+| Weck mich morgen um 6:30 | Turn on the flashlight |
+| Öffne Spotify · Navigiere nach Graz | Add dentist tomorrow at 10 to my calendar |
+| Fasse die Zwischenablage zusammen | What is this? (mit Bildschirm) |
 
 ## Technik
 

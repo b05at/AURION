@@ -18,6 +18,15 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
+/** Bildschirm-/Auswahl-Inhalt als Kontext für Fragen */
+data class ScreenInput(
+    val text: String,
+    val labels: List<String>,
+    val image: android.graphics.Bitmap?,
+    val isSelection: Boolean,
+    val app: String? = null,
+)
+
 enum class CardKind { REMINDER, SHOPPING, MEMORY, WEATHER, NONE }
 
 data class Reply(
@@ -40,6 +49,22 @@ class Brain(private val ctx: Context) {
     private val settings = Settings.get(ctx)
     private val llm = LlmEngine.get(ctx)
     private val bring = BringClient(settings)
+    private val device = DeviceActions(ctx)
+
+    // Kontext der aktuellen Anfrage
+    private var screenProvider: (suspend () -> ScreenInput?)? = null
+    private var spoken = true
+    private var partial: ((String) -> Unit)? = null
+    private var screenCache: ScreenInput? = null
+    private var screenLoaded = false
+
+    private suspend fun screen(): ScreenInput? {
+        if (!screenLoaded) {
+            screenCache = runCatching { screenProvider?.invoke() }.getOrNull()
+            screenLoaded = true
+        }
+        return screenCache
+    }
 
     /** Offene Rückfrage (z. B. "Wann soll ich dich erinnern?") */
     private sealed class Pending {
@@ -54,7 +79,22 @@ class Brain(private val ctx: Context) {
         pending = null
     }
 
-    suspend fun handle(input: String): Reply {
+    /**
+     * @param screen liefert bei Bedarf den Bildschirm-/Auswahl-Kontext (lazy, wegen OCR)
+     * @param spoken Antwort wird vorgelesen -> kurz; getippt -> ausführlich mit Markdown
+     * @param onPartial Live-Text während das LLM schreibt
+     */
+    suspend fun handle(
+        input: String,
+        screen: (suspend () -> ScreenInput?)? = null,
+        spoken: Boolean = true,
+        onPartial: ((String) -> Unit)? = null,
+    ): Reply {
+        screenProvider = screen
+        screenLoaded = false
+        screenCache = null
+        this.spoken = spoken
+        partial = onPartial
         val text = input.trim()
         val lang = when (settings.langMode) {
             LangMode.DE -> "de"
@@ -88,6 +128,23 @@ class Brain(private val ctx: Context) {
             } else return Reply(t(lang, "Okay, abgebrochen.", "Okay, cancelled."), lang)
         }
 
+        // --- Rechnen & Einheiten (exakt, lokal) ---
+        Units.tryAnswer(text, lang)?.let { return Reply(it, lang) }
+        Calc.tryAnswer(text, lang)?.let { return Reply(it, lang) }
+
+        // --- Geräteaktionen ---
+        deviceAction(text, l, lang)?.let { return it }
+
+        // --- Zwischenablage ---
+        if (Regex("zwischenablage|clipboard|kopierte(n)? text").containsMatchIn(l)) {
+            val clip = readClipboard()
+            if (clip.isNullOrBlank()) return Reply(t(lang, "Die Zwischenablage ist leer.", "The clipboard is empty."), lang)
+            val q = text.replace(Regex("(in |aus |von |der |die |meiner |meine |my |the |in the |from the )*(zwischenablage|clipboard)", RegexOption.IGNORE_CASE), "das").trim()
+            screenCache = ScreenInput(clip, emptyList(), null, isSelection = true)
+            screenLoaded = true
+            return chat(q.ifBlank { t(lang, "Fasse das zusammen", "Summarize this") }, lang, screenCache)
+        }
+
         // --- Uhrzeit / Datum ---
         if (Regex("\\b(wie spät|wieviel uhr|wie viel uhr|what time is it|what's the time|current time)\\b").containsMatchIn(l)) {
             val now = LocalDateTime.now()
@@ -117,7 +174,7 @@ class Brain(private val ctx: Context) {
         }
 
         // --- Erinnerung anlegen ---
-        if (Regex("\\b(erinner\\w*|remind\\w*|reminder|wecke? mich)\\b").containsMatchIn(l)) {
+        if (Regex("\\b(erinner\\w*|remind\\w*|reminder)\\b").containsMatchIn(l)) {
             return reminderIntent(text, lang)
         }
 
@@ -136,6 +193,11 @@ class Brain(private val ctx: Context) {
         }
         if (mentionsList || Regex("^(kauf\\w*|wir brauchen|ich brauche|we need|i need|buy)\\b").containsMatchIn(l)) {
             var items = parseItems(text)
+            if (items.isEmpty()) screen()?.let { sc ->
+                // "Setz das auf die Einkaufsliste" mit Bildschirm/Auswahl
+                items = if (llm.isAvailable) llmExtractItems(sc.text.take(1500) + "\n" + sc.labels.joinToString(", "))
+                else sc.text.lines().map { it.trim() }.filter { it.length in 2..40 }.take(10).map { BringItem(it.replaceFirstChar { c -> c.uppercase() }, "") }
+            }
             if (items.isEmpty() && llm.isAvailable) items = llmExtractItems(text)
             if (items.isEmpty()) {
                 pending = Pending.ShoppingItems
@@ -171,15 +233,24 @@ class Brain(private val ctx: Context) {
             )
         }
 
-        // --- Freies Gespräch mit dem lokalen LLM ---
-        return chat(text, lang)
+        // --- Freies Gespräch mit dem lokalen LLM (ggf. mit Bildschirm-Kontext) ---
+        val sc = screenProvider?.let {
+            val selection = screen()?.takeIf { it.isSelection }
+            selection ?: if (wantsScreen(l)) screen() else null
+        }
+        return chat(text, lang, sc)
     }
 
     // ================= Erinnerungen =================
 
     private suspend fun reminderIntent(text: String, lang: String): Reply {
         val parsed = TimeParser.parse(text)
-        val body = cleanReminderText(parsed.rest)
+        var body = cleanReminderText(parsed.rest)
+        if (body.isBlank() || Regex("^(daran|das|dies|this|that|it)$", RegexOption.IGNORE_CASE).matches(body)) {
+            body = screen()?.let { sc ->
+                sc.text.lines().map { it.trim() }.firstOrNull { it.length > 2 }?.take(80) ?: sc.labels.firstOrNull()
+            } ?: body.takeUnless { Regex("^(daran|das|dies|this|that|it)$", RegexOption.IGNORE_CASE).matches(it) }.orEmpty()
+        }
         if (parsed.dateTime != null) {
             if (body.isBlank()) {
                 pending = Pending.ReminderText(parsed.dateTime)
@@ -399,10 +470,10 @@ class Brain(private val ctx: Context) {
         "liste", "bring", "bring!", "hinzu", "drauf", "dazu", "setz", "setze", "setzen", "schreib", "schreibe", "schreiben",
         "füg", "füge", "fügen", "pack", "packe", "tu", "gib", "kannst", "du", "könntest", "ich", "wir", "brauche", "brauchen",
         "kaufen", "kauf", "auch", "von", "nimm", "lösche", "lösch", "entferne", "entfern", "streiche", "streich", "runter",
-        "hey", "aurion", "hallo", "mir", "uns", "einkaufen",
+        "hey", "aurion", "hallo", "mir", "uns", "einkaufen", "das", "dies", "diese", "dieses", "es", "alles", "hier",
         // en
         "add", "put", "please", "to", "on", "my", "our", "the", "shopping", "grocery", "list", "can", "you", "could", "i",
-        "we", "need", "buy", "also", "remove", "delete", "take", "off", "from", "get", "some",
+        "we", "need", "buy", "also", "remove", "delete", "take", "off", "from", "get", "some", "this", "that", "it", "these",
     )
 
     fun parseItems(text: String): List<BringItem> {
@@ -436,33 +507,140 @@ class Brain(private val ctx: Context) {
 
     // ================= LLM =================
 
+    private fun wantsScreen(l: String) = Regex(
+        "bildschirm|screen|was ist das|was sind das|was steht (da|hier)|was siehst|was sehe ich|wer ist das|was bedeutet das|" +
+            "erklär\\w* (mir )?(das|dies)|fass\\w* (das|dies|es)|zusammenfass|übersetz\\w* (das|dies|es)|lies (das|dies|vor)|" +
+            "antworte (darauf|auf (die|diese) nachricht)|was meint (er|sie)|stimmt das|" +
+            "what is this|what's this|what am i looking at|who is this|summari[sz]e (this|it)|translate (this|it)|explain (this|it)|read (this|it)|reply to this"
+    ).containsMatchIn(l)
+
     private fun systemPrompt(lang: String): String {
         val now = LocalDateTime.now()
         val mem = store.memory.value
         val memText = if (mem.isEmpty()) "" else
             "\nDinge, die dir der Nutzer anvertraut hat (nutze sie, wenn passend):\n" + mem.joinToString("\n") { "- ${it.text}" }
         val languageRule = if (lang == "en") "Answer in English." else "Antworte auf Deutsch."
+        val style = if (spoken) """
+            Deine Antwort wird vorgelesen: antworte in höchstens drei kurzen Sätzen, ohne Markdown, ohne Listen, ohne Emojis.
+        """.trimIndent() else """
+            Die Antwort wird gelesen: antworte so ausführlich wie nötig und so knapp wie möglich.
+            Strukturiere mit Markdown (Listen, **fett**, Codeblöcke mit ``` für Code), aber ohne unnötige Überschriften.
+            Wenn du einen Text schreiben sollst (E-Mail, Nachricht, Brief, Zusammenfassung, Übersetzung), liefere direkt das fertige Ergebnis.
+            Bei kniffligen Fragen denke Schritt für Schritt und nenne dann das Ergebnis.
+        """.trimIndent()
         return """
-            Du bist Aurion, ein privater Sprachassistent, der vollständig lokal auf einem Android-Smartphone läuft.
-            Du bist freundlich, präzise und kommst schnell auf den Punkt. Deine Antworten werden vorgelesen:
-            antworte in höchstens drei kurzen Sätzen, ohne Markdown, ohne Listen, ohne Emojis.
-            Erfinde keine Fakten; wenn du etwas nicht weißt (z. B. Live-Daten wie Nachrichten), sag es ehrlich.
+            Du bist Aurion, ein privater KI-Assistent, der vollständig lokal auf einem Android-Smartphone läuft.
+            Du bist hilfsbereit, ehrlich und präzise. Du kannst erklären, schreiben, übersetzen, zusammenfassen, beraten und programmieren.
+            Erfinde keine Fakten. Wenn du etwas nicht sicher weißt oder Live-Daten bräuchtest (Nachrichten, Kurse), sag das ehrlich.
+            $style
             Aktuelles Datum und Uhrzeit: ${now.format(DateTimeFormatter.ofPattern("EEEE, d. MMMM yyyy, HH:mm", Locale.GERMAN))}.
             $languageRule$memText
         """.trimIndent()
     }
 
-    private suspend fun chat(text: String, lang: String): Reply {
+    private suspend fun chat(text: String, lang: String, sc: ScreenInput? = null): Reply {
         if (!llm.isAvailable) {
+            if (sc != null) {
+                // Ohne Modell: zumindest zeigen, was erkannt wurde
+                val parts = ArrayList<String>()
+                if (sc.labels.isNotEmpty()) parts += t(lang, "Ich erkenne: ${sc.labels.joinToString(", ")}.", "I can see: ${sc.labels.joinToString(", ")}.")
+                if (sc.text.isNotBlank()) parts += t(lang, "Text: ${sc.text.take(400)}", "Text: ${sc.text.take(400)}")
+                parts += t(lang, "Für Erklärungen lade ein Sprachmodell in den Einstellungen.", "Download a language model in settings for explanations.")
+                return Reply(parts.joinToString("\n"), lang)
+            }
             return Reply(
-                t(lang, "Für freie Fragen brauche ich noch mein Sprachmodell. Lade es in den Einstellungen herunter. Erinnerungen, Einkaufsliste und Merken funktionieren schon.",
-                    "I need my language model for open questions. Download it in settings. Reminders, shopping list and memory already work."), lang
+                t(lang, "Für freie Fragen brauche ich noch mein Sprachmodell. Lade es in den Einstellungen herunter. Erinnerungen, Einkaufsliste, Wetter, Rechnen und Merken funktionieren schon.",
+                    "I need my language model for open questions. Download it in settings. Reminders, shopping list, weather, maths and memory already work."), lang
             )
         }
-        val history = store.chat.value.dropLast(1).takeLast(8).map { Turn(it.fromUser, it.text) }
-        val answer = llm.chat(systemPrompt(lang), history, text)
+        var system = systemPrompt(lang)
+        var user = text
+        var image: android.graphics.Bitmap? = null
+        if (sc != null) {
+            val what = if (sc.isSelection) t(lang, "einem Bereich, den der Nutzer auf dem Bildschirm markiert hat", "an area the user selected on screen")
+            else t(lang, "dem aktuellen Bildschirm des Nutzers", "the user's current screen")
+            val sb = StringBuilder()
+            sb.append(t(lang, "Die Frage bezieht sich auf $what.", "The question refers to $what."))
+            sc.app?.let { sb.append(t(lang, " App: $it.", " App: $it.")) }
+            if (sc.labels.isNotEmpty()) sb.append(t(lang, "\nErkannte Objekte: ", "\nDetected objects: ")).append(sc.labels.joinToString(", "))
+            if (sc.text.isNotBlank()) sb.append(t(lang, "\nErkannter Text:\n", "\nRecognized text:\n")).append(sc.text.take(2500))
+            if (llm.supportsVision && sc.image != null) {
+                image = sc.image
+                sb.append(t(lang, "\nDas Bild ist beigefügt.", "\nThe image is attached."))
+            }
+            system += "\n\n" + sb.toString()
+            if (user.length < 3) user = t(lang, "Was ist das?", "What is this?")
+        }
+        val history = if (sc != null) emptyList() else store.chat.value.dropLast(1).takeLast(8).map { Turn(it.fromUser, it.text) }
+        val answer = llm.chat(system, history, user, image = image, onPartial = partial)
         return Reply(answer.ifBlank { t(lang, "Dazu fällt mir gerade nichts ein.", "I'm not sure what to say.") }, lang)
     }
+
+    // ================= Geräteaktionen =================
+
+    private suspend fun deviceAction(text: String, l: String, lang: String): Reply? {
+        // Taschenlampe
+        Regex("(taschenlampe|flashlight|torch)").find(l)?.let {
+            val off = Regex("\\b(aus|ab|off|ausschalten|abdrehen)\\b").containsMatchIn(l)
+            return if (device.torch(!off)) Reply(t(lang, if (off) "Taschenlampe aus." else "Taschenlampe an.", if (off) "Flashlight off." else "Flashlight on."), lang)
+            else Reply(t(lang, "Die Taschenlampe ist nicht verfügbar.", "The flashlight isn't available."), lang)
+        }
+        // Wecker
+        if (Regex("\\b(wecker|weck(e)? mich|alarm)\\b").containsMatchIn(l) && !Regex("erinner|remind").containsMatchIn(l)) {
+            val dt = TimeParser.parse(text).dateTime
+                ?: return Reply(t(lang, "Für wann soll ich den Wecker stellen?", "When should I set the alarm for?"), lang)
+            device.alarm(dt.hour, dt.minute, "Aurion")
+            return Reply(
+                t(lang, "Wecker gestellt auf ${dt.format(DateTimeFormatter.ofPattern("H:mm"))} Uhr.", "Alarm set for ${dt.format(DateTimeFormatter.ofPattern("h:mm a", Locale.ENGLISH))}."), lang
+            )
+        }
+        // Anrufen (Nummer)
+        Regex("^(ruf|wähl\\w*|call|dial)\\s+(die nummer\\s+|the number\\s+)?([+\\d][\\d /-]{4,})(\\s+an)?$").find(l)?.let { m ->
+            device.dial(m.groupValues[3])
+            return Reply(t(lang, "Ich öffne die Telefon-App.", "Opening the dialer."), lang)
+        }
+        // Navigation
+        Regex("^(navigier\\w*|navigate|route|fahr\\w*|bring mich|take me|directions)\\s+(mich\\s+|me\\s+)?(nach|zu|zur|zum|to|in die|in den)\\s+(.+)$").find(l)?.let { m ->
+            val dest = text.substring(text.length - m.groupValues[4].length).trim().trimEnd('.', '!', '?')
+            device.navigate(dest)
+            return Reply(t(lang, "Navigation nach $dest gestartet.", "Starting navigation to $dest."), lang)
+        }
+        // Kalender
+        if (Regex("kalender|calendar|termin(?!e? ?erinner)").containsMatchIn(l) && Regex("trag|eintrag|leg|erstell|neuer|add|create|schedule|setz").containsMatchIn(l)) {
+            val parsed = TimeParser.parse(text)
+            val title = parsed.rest
+                .replace(Regex("\\b(bitte|please|trag\\w*|ein|eintragen|leg\\w*|an|erstell\\w*|neuen?|termin|in (den|meinen) kalender|kalender|add|create|schedule|to my calendar|calendar|event|an event|a|in|setz\\w*)\\b", RegexOption.IGNORE_CASE), " ")
+                .replace(Regex("\\s+"), " ").trim().trim(',', '.', ':').replaceFirstChar { it.uppercase() }
+            val start = parsed.dateTime ?: LocalDateTime.now().plusHours(1).withMinute(0)
+            device.calendarEvent(title.ifBlank { "Termin" }, start)
+            return Reply(t(lang, "Ich habe den Termin im Kalender vorbereitet – bitte noch speichern.", "I've prepared the event in your calendar – just save it."), lang)
+        }
+        // Web-Suche (ausdrücklich gewünscht)
+        Regex("^(such\\w*|google|search)\\s+(im (web|internet|netz)\\s+)?(nach\\s+|for\\s+|the web for\\s+)?(.+)$").find(l)?.let { m ->
+            if (Regex("^(such|google|search)").containsMatchIn(l) && !Regex("einkaufsliste|erinnerung").containsMatchIn(l)) {
+                val q = m.groupValues[5].trim()
+                if (q == "das" || q == "this") {
+                    screen()?.let { sc -> device.webSearch(sc.text.lines().firstOrNull { it.isNotBlank() } ?: sc.labels.joinToString(" ")) }
+                } else device.webSearch(q)
+                return Reply(t(lang, "Ich öffne die Suche.", "Opening search."), lang)
+            }
+        }
+        // App öffnen
+        Regex("^(öffne|starte|start|open|launch|geh zu|go to)\\s+(die\\s+|the\\s+)?(app\\s+)?(.+?)(\\s+app)?$").find(l)?.let { m ->
+            val name = m.groupValues[4].trim().trimEnd('.', '!', '?')
+            if (name.isNotBlank() && !Regex("einkaufsliste|erinnerung|wetter").containsMatchIn(name)) {
+                val opened = device.openApp(name)
+                return if (opened != null) Reply(t(lang, "Ich öffne $opened.", "Opening $opened."), lang)
+                else Reply(t(lang, "Ich habe keine App namens „$name“ gefunden.", "I couldn't find an app called \"$name\"."), lang)
+            }
+        }
+        return null
+    }
+
+    private fun readClipboard(): String? = runCatching {
+        val cm = ctx.getSystemService(android.content.ClipboardManager::class.java)
+        cm.primaryClip?.getItemAt(0)?.coerceToText(ctx)?.toString()
+    }.getOrNull()
 
     private suspend fun llmExtractReminder(text: String): Pair<LocalDateTime, String>? = runCatching {
         val now = LocalDateTime.now()

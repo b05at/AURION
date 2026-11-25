@@ -13,6 +13,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -108,13 +109,16 @@ fun ChatScreen(vm: AssistantViewModel) {
     var input by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
 
-    LaunchedEffect(chat.size, st.orb, st.reply) {
-        val count = chat.size + (if (st.orb != OrbState.IDLE) 1 else 0) + (if (st.reply?.weather != null) 1 else 0)
+    LaunchedEffect(chat.size, st.orb, st.reply, st.streaming?.length?.div(80)) {
+        val count = chat.size + (if (st.orb != OrbState.IDLE || st.streaming != null) 1 else 0) + (if (st.reply?.weather != null) 1 else 0)
         if (count > 0) listState.animateScrollToItem(count - 1)
     }
 
     Column(Modifier.fillMaxSize().imePadding()) {
-        if (chat.isEmpty() && st.orb == OrbState.IDLE) {
+        st.lens?.let { lens ->
+            LensCard(lens, vm, Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) { vm.closeLens() }
+        }
+        if (chat.isEmpty() && st.orb == OrbState.IDLE && st.lens == null) {
             Column(
                 Modifier.weight(1f).fillMaxWidth().padding(28.dp),
                 verticalArrangement = Arrangement.Center,
@@ -123,7 +127,7 @@ fun ChatScreen(vm: AssistantViewModel) {
                 Text("Hallo! Ich bin Aurion.", style = MaterialTheme.typography.displaySmall, color = AurionColors.TextHigh)
                 Spacer(Modifier.height(12.dp))
                 Text(
-                    "Probier zum Beispiel:\n„Erinnere mich in 20 Minuten an die Wäsche“\n„Setz Milch und Eier auf die Einkaufsliste“\n„Merk dir, dass mein Auto beim Bahnhof steht“\n„Remind me tomorrow at 8 to call Anna“",
+                    "Probier zum Beispiel:\n„Erinnere mich in 20 Minuten an die Wäsche“\n„Setz Milch und Eier auf die Einkaufsliste“\n„Merk dir, dass mein Auto beim Bahnhof steht“\n„Remind me tomorrow at 8 to call Anna“\n„Was sind 17 % von 2340?“ · „5 Meilen in km“\n„Schreib eine Absage für das Meeting morgen“\n\nTeile Texte oder Bilder an Aurion – oder kreise über die Seitentaste etwas auf dem Bildschirm ein.",
                     style = MaterialTheme.typography.bodyLarge, color = AurionColors.TextMid
                 )
             }
@@ -138,7 +142,9 @@ fun ChatScreen(vm: AssistantViewModel) {
                 st.reply?.takeIf { it.weather != null && st.orb != OrbState.THINKING && chat.isNotEmpty() }?.let { r ->
                     item { ReplyCard(r, Modifier.fillMaxWidth(), showText = false) }
                 }
-                if (st.orb != OrbState.IDLE) {
+                if (st.streaming != null && st.lens == null) {
+                    item { Bubble(ChatMessage(false, st.streaming!!.ifBlank { "…" })) }
+                } else if (st.orb != OrbState.IDLE && !(st.lens != null && st.orb == OrbState.THINKING)) {
                     item {
                         Text(
                             when (st.orb) {
@@ -201,28 +207,30 @@ fun ChatScreen(vm: AssistantViewModel) {
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun Bubble(m: ChatMessage) {
+    val ctx = LocalContext.current
     Box(Modifier.fillMaxWidth(), contentAlignment = if (m.fromUser) Alignment.CenterEnd else Alignment.CenterStart) {
-        Text(
-            m.text,
-            style = MaterialTheme.typography.bodyLarge,
-            color = AurionColors.TextHigh,
-            modifier = Modifier
-                .widthIn(max = 320.dp)
-                .clip(
-                    RoundedCornerShape(
-                        topStart = 22.dp, topEnd = 22.dp,
-                        bottomStart = if (m.fromUser) 22.dp else 6.dp,
-                        bottomEnd = if (m.fromUser) 6.dp else 22.dp
-                    )
-                )
-                .background(
-                    if (m.fromUser) Brush.linearGradient(listOf(AurionColors.Blue, Color(0xFF3A66E8)))
-                    else Brush.linearGradient(listOf(Color(0x26FFFFFF), Color(0x14FFFFFF)))
-                )
-                .padding(horizontal = 16.dp, vertical = 11.dp)
+        val shape = RoundedCornerShape(
+            topStart = 22.dp, topEnd = 22.dp,
+            bottomStart = if (m.fromUser) 22.dp else 6.dp,
+            bottomEnd = if (m.fromUser) 6.dp else 22.dp
         )
+        val mod = Modifier
+            .widthIn(max = if (m.fromUser) 320.dp else 360.dp)
+            .clip(shape)
+            .background(
+                if (m.fromUser) Brush.linearGradient(listOf(AurionColors.Blue, Color(0xFF3A66E8)))
+                else Brush.linearGradient(listOf(Color(0x26FFFFFF), Color(0x14FFFFFF)))
+            )
+            .combinedClickable(onClick = {}, onLongClick = {
+                copy(ctx, m.text)
+                android.widget.Toast.makeText(ctx, "Kopiert", android.widget.Toast.LENGTH_SHORT).show()
+            })
+            .padding(horizontal = 16.dp, vertical = 11.dp)
+        if (m.fromUser) Text(m.text, style = MaterialTheme.typography.bodyLarge, color = AurionColors.TextHigh, modifier = mod)
+        else MarkdownText(m.text, modifier = mod)
     }
 }
 
@@ -382,6 +390,10 @@ fun SettingsScreen(tick: Int) {
                     Intent(AndroidSettings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:${ctx.packageName}"))
                 )
             }
+            Text(
+                "Bildschirm-Lupe: In den Android-Einstellungen unter Standard-Apps › Digitaler Assistent „Screenshot verwenden“ und „Text auf dem Bildschirm verwenden“ einschalten. Dann über die Seitentaste etwas einkreisen.",
+                style = MaterialTheme.typography.bodyMedium, color = AurionColors.TextMid, modifier = Modifier.padding(top = 8.dp)
+            )
             Text(
                 "Tipp (Samsung): Einstellungen › Erweiterte Funktionen › Seitentaste › Gedrückt halten › Digitaler Assistent.",
                 style = MaterialTheme.typography.bodyMedium, color = AurionColors.TextLow, modifier = Modifier.padding(top = 8.dp)
@@ -621,6 +633,7 @@ private fun ModelSection() {
     var dl by remember { mutableStateOf<DownloadState?>(ModelManager.poll(ctx)) }
     var importing by remember { mutableStateOf(false) }
     var installed by remember { mutableStateOf(ModelManager.installed(ctx)) }
+    var hfToken by remember { mutableStateOf(settings.hfToken ?: "") }
 
     LaunchedEffect(dl?.running) {
         while (dl?.running == true) {
@@ -657,7 +670,7 @@ private fun ModelSection() {
                 LinearProgressIndicator(progress = { d.progress }, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), color = AurionColors.Cyan)
                 SecondaryButton("Abbrechen") { ModelManager.cancelDownload(ctx); dl = null }
             } else if (d.failed) {
-                Text("Download fehlgeschlagen – bitte erneut versuchen.", color = AurionColors.Amber)
+                Text("Download fehlgeschlagen – bei Gemma: Token und Lizenz-Zustimmung prüfen, sonst erneut versuchen.", color = AurionColors.Amber)
             }
         }
         if (dl?.running != true) {
@@ -674,9 +687,35 @@ private fun ModelSection() {
                             LlmEngine.get(ctx).release()
                             current = file.absolutePath
                         }
-                        else -> PrimaryButton("Herunterladen") {
-                            ModelManager.startDownload(ctx, opt)
-                            dl = DownloadState(true, 0f, false, false)
+                        else -> {
+                            if (opt.needsToken) {
+                                Text(
+                                    "Einmalig: auf huggingface.co anmelden, auf der Modellseite der Gemma-Lizenz zustimmen und unter Settings › Access Tokens einen Lese-Token erstellen.",
+                                    style = MaterialTheme.typography.bodyMedium, color = AurionColors.TextLow
+                                )
+                                Spacer(Modifier.height(6.dp))
+                                OutlinedTextField(
+                                    hfToken, { hfToken = it; settings.hfToken = it.trim() }, Modifier.fillMaxWidth(),
+                                    label = { Text("Hugging-Face-Token (hf_…)") }, singleLine = true,
+                                    visualTransformation = PasswordVisualTransformation(),
+                                    shape = RoundedCornerShape(14.dp), colors = fieldColors()
+                                )
+                                Spacer(Modifier.height(6.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    SecondaryButton("Modellseite öffnen") {
+                                        runCatching {
+                                            ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://huggingface.co/google/gemma-3n-E2B-it-litert-preview")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                                        }
+                                    }
+                                    PrimaryButton("Herunterladen", enabled = hfToken.isNotBlank()) {
+                                        ModelManager.startDownload(ctx, opt)
+                                        dl = DownloadState(true, 0f, false, false)
+                                    }
+                                }
+                            } else PrimaryButton("Herunterladen") {
+                                ModelManager.startDownload(ctx, opt)
+                                dl = DownloadState(true, 0f, false, false)
+                            }
                         }
                     }
                 }

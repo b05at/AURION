@@ -1,6 +1,9 @@
 package cc.szakacs.aurion.assist
 
+import android.app.assist.AssistContent
+import android.app.assist.AssistStructure
 import android.content.Context
+import android.graphics.Bitmap
 import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
@@ -30,6 +33,7 @@ class AurionSession(ctx: Context) : VoiceInteractionSession(ctx) {
     }
 
     override fun onPrepareShow(args: Bundle?, showFlags: Int) {
+        ScreenContext.clear()
         super.onPrepareShow(args, showFlags)
         // Kein eigenes Session-Fenster – die Oberfläche ist die AssistActivity
         setUiEnabled(false)
@@ -45,6 +49,17 @@ class AurionSession(ctx: Context) : VoiceInteractionSession(ctx) {
         } catch (e: Exception) {
             runCatching { context.startActivity(intent) }
         }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onHandleAssist(data: Bundle?, structure: AssistStructure?, content: AssistContent?) {
+        // Text der Vordergrund-App ("Text auf dem Bildschirm verwenden")
+        runCatching { ScreenContext.setStructure(structure) }
+    }
+
+    override fun onHandleScreenshot(screenshot: Bitmap?) {
+        // Screenshot ("Screenshot verwenden") – Basis für die Bildschirm-Lupe
+        ScreenContext.setScreenshot(screenshot?.copy(Bitmap.Config.ARGB_8888, false))
     }
 
     override fun onDestroy() {

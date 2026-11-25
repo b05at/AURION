@@ -6,7 +6,10 @@ import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import cc.szakacs.aurion.assist.ScreenContext
 import cc.szakacs.aurion.brain.Brain
+import cc.szakacs.aurion.brain.ScreenInput
+import cc.szakacs.aurion.vision.Vision
 import cc.szakacs.aurion.brain.Reply
 import cc.szakacs.aurion.data.LangMode
 import cc.szakacs.aurion.data.Settings
@@ -18,12 +21,24 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
+/** Zustand der Bildschirm-Lupe (Auswahl, geteiltes Bild oder geteilter Text) */
+data class LensState(
+    val image: android.graphics.Bitmap?,
+    val analyzing: Boolean = true,
+    val result: cc.szakacs.aurion.vision.VisionResult? = null,
+    val answer: String? = null,
+    val answering: Boolean = false,
+)
+
 data class AssistUiState(
     val orb: OrbState = OrbState.IDLE,
     val level: Float = 0f,
     val transcript: String = "",
     val reply: Reply? = null,
     val hint: String? = null,
+    /** Live-Text, während das LLM schreibt */
+    val streaming: String? = null,
+    val lens: LensState? = null,
 )
 
 class AssistantViewModel(app: Application) : AndroidViewModel(app) {
@@ -78,7 +93,7 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
             }
 
             override fun onFinal(text: String) {
-                submit(text)
+                submit(text, spoken = true)
             }
 
             override fun onError(message: String) {
@@ -93,16 +108,49 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = _state.value.copy(orb = OrbState.IDLE, level = 0f)
     }
 
-    fun submit(text: String) {
+    /** Liefert den Bildschirm-Kontext für das Brain: Auswahl > ganzer Bildschirm */
+    private fun screenProvider(): (suspend () -> ScreenInput?) = provider@{
+        val lens = _state.value.lens
+        if (lens?.result != null) {
+            return@provider ScreenInput(lens.result.text, lens.result.labels, lens.image, isSelection = true)
+        }
+        val shot = ScreenContext.screenshot.value
+        val structureText = ScreenContext.text.value
+        if (shot == null && structureText == null) return@provider null
+        // Ohne Bildschirmtext (z. B. Bilder, Spiele) per OCR lesen
+        val vr = if (shot != null && (structureText == null || structureText.length < 40)) Vision.analyze(shot) else null
+        ScreenInput(
+            text = listOfNotNull(structureText, vr?.text).joinToString("\n").take(5000),
+            labels = vr?.labels.orEmpty(),
+            image = shot,
+            isSelection = false,
+            app = ScreenContext.appPackage,
+        )
+    }
+
+    /**
+     * @param spoken true = per Sprache gefragt -> kurze, vorgelesene Antwort;
+     *               false = getippt/Lupe -> ausführlich, nicht vorgelesen
+     */
+    fun submit(text: String, spoken: Boolean = false) {
         if (text.isBlank()) return
         speech.stop()
-        _state.value = _state.value.copy(orb = OrbState.THINKING, transcript = text, level = 0f, hint = null)
+        _state.value = _state.value.copy(orb = OrbState.THINKING, transcript = text, level = 0f, hint = null, streaming = null)
         viewModelScope.launch {
-            val reply = brain.handle(text)
-            _state.value = _state.value.copy(reply = reply)
-            if (settings.speakReplies) {
+            val lensActive = _state.value.lens?.result != null
+            if (lensActive) _state.value = _state.value.copy(lens = _state.value.lens?.copy(answering = true, answer = null))
+            val reply = brain.handle(text, screenProvider(), spoken) { partial ->
+                if (lensActive) _state.value = _state.value.copy(lens = _state.value.lens?.copy(answer = partial))
+                else _state.value = _state.value.copy(streaming = partial)
+            }
+            _state.value = _state.value.copy(
+                reply = if (lensActive && reply.card == cc.szakacs.aurion.brain.CardKind.NONE) null else reply,
+                streaming = null,
+                lens = _state.value.lens?.copy(answering = false, answer = if (lensActive) reply.text else _state.value.lens?.answer),
+            )
+            if (spoken && settings.speakReplies) {
                 _state.value = _state.value.copy(orb = OrbState.SPEAKING)
-                speaker.speak(reply.text, reply.lang, done = {
+                speaker.speak(plain(reply.text), reply.lang, done = {
                     viewModelScope.launch {
                         _state.value = _state.value.copy(orb = OrbState.IDLE)
                         // Bei Rückfragen direkt wieder zuhören
@@ -111,9 +159,47 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
                 })
             } else {
                 _state.value = _state.value.copy(orb = OrbState.IDLE)
-                if (reply.text.trimEnd().endsWith("?")) startListening()
+                if (spoken && reply.text.trimEnd().endsWith("?")) startListening()
             }
         }
+    }
+
+    /** Markdown für die Sprachausgabe entfernen */
+    private fun plain(s: String) = s
+        .replace(Regex("```[\\s\\S]*?```"), " ")
+        .replace(Regex("[*_`#>]+"), "")
+        .replace(Regex("^\\s*[-•]\\s+", RegexOption.MULTILINE), "")
+        .trim()
+
+    // ================= Bildschirm-Lupe =================
+
+    /** Eingekreister Bereich oder geteiltes Bild analysieren */
+    fun analyzeImage(bitmap: android.graphics.Bitmap, autoExplain: Boolean = true) {
+        speech.stop(); speaker.stop()
+        _state.value = _state.value.copy(lens = LensState(bitmap), reply = null, transcript = "", orb = OrbState.THINKING)
+        viewModelScope.launch {
+            val r = Vision.analyze(bitmap)
+            _state.value = _state.value.copy(lens = _state.value.lens?.copy(analyzing = false, result = r), orb = OrbState.IDLE)
+            if (autoExplain && (LlmEngine.get(ctx).isAvailable)) {
+                val q = when {
+                    r.text.length > 300 -> "Fasse den markierten Inhalt kurz zusammen und erkläre, worum es geht."
+                    r.text.isNotBlank() -> "Was ist das? Erkläre kurz, worum es beim markierten Inhalt geht."
+                    else -> "Was ist auf dem markierten Bild zu sehen? Beschreibe es kurz."
+                }
+                submit(q, spoken = false)
+            }
+        }
+    }
+
+    /** Geteilten Text als Kontext übernehmen */
+    fun analyzeText(text: String) {
+        val r = cc.szakacs.aurion.vision.VisionResult(text, emptyList(), Vision.extractEntities(text))
+        _state.value = _state.value.copy(lens = LensState(null, analyzing = false, result = r), reply = null)
+        if (LlmEngine.get(ctx).isAvailable) submit(if (text.length > 400) "Fasse das kurz zusammen." else "Erkläre kurz, worum es hier geht.", spoken = false)
+    }
+
+    fun closeLens() {
+        _state.value = _state.value.copy(lens = null)
     }
 
     fun reset() {

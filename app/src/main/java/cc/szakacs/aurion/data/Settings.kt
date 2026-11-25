@@ -55,6 +55,11 @@ class Settings private constructor(private val p: SharedPreferences) {
         get() = p.getString("wxLon", "0")!!.toDouble()
         set(v) = p.edit().putString("wxLon", v.toString()).apply()
 
+    /** Hugging-Face-Token für lizenzpflichtige Modelle (Gemma) */
+    var hfToken: String?
+        get() = p.getString("hfToken", null)
+        set(v) = p.edit().putString("hfToken", v).apply()
+
     var modelPath: String?
         get() = p.getString("modelPath", null)
         set(v) = p.edit().putString("modelPath", v).apply()

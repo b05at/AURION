@@ -74,4 +74,8 @@ dependencies {
 
     // Lokales LLM (on-device)
     implementation("com.google.mediapipe:tasks-genai:0.10.27")
+
+    // On-Device Texterkennung + Objekterkennung (gebündelte Modelle, offline)
+    implementation("com.google.mlkit:text-recognition:16.0.1")
+    implementation("com.google.mlkit:image-labeling:17.0.9")
 }

@@ -70,7 +70,10 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         requestedTab = intent?.getStringExtra("tab")
         // Beim Öffnen der App mit leerem Gespräch starten
-        if (savedInstanceState == null) vm.newConversation()
+        if (savedInstanceState == null) {
+            vm.newConversation()
+            handleShare(intent)
+        }
         setContent {
             AurionTheme {
                 AurionMain(vm, resumeTick.intValue, requestedTab) { requestedTab = null }
@@ -81,6 +84,36 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         requestedTab = intent.getStringExtra("tab")
+        handleShare(intent)
+    }
+
+    /** Von anderen Apps geteilte Texte/Bilder oder markierter Text ("Frag Aurion") */
+    private fun handleShare(intent: Intent?) {
+        intent ?: return
+        val text = when (intent.action) {
+            Intent.ACTION_SEND -> intent.getStringExtra(Intent.EXTRA_TEXT)
+            Intent.ACTION_PROCESS_TEXT -> intent.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)?.toString()
+            else -> null
+        }
+        val imageUri: android.net.Uri? = if (intent.action == Intent.ACTION_SEND && intent.type?.startsWith("image/") == true) {
+            if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(Intent.EXTRA_STREAM, android.net.Uri::class.java)
+            else @Suppress("DEPRECATION") intent.getParcelableExtra<android.net.Uri>(Intent.EXTRA_STREAM)
+        } else null
+        when {
+            imageUri != null -> runCatching {
+                val src = android.graphics.ImageDecoder.createSource(contentResolver, imageUri)
+                val bmp = android.graphics.ImageDecoder.decodeBitmap(src) { d, _, _ ->
+                    d.allocator = android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE
+                    d.setTargetSampleSize(2)
+                }
+                requestedTab = "chat"
+                vm.analyzeImage(bmp)
+            }
+            !text.isNullOrBlank() -> {
+                requestedTab = "chat"
+                vm.analyzeText(text)
+            }
+        }
     }
 
     override fun onResume() {
