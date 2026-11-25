@@ -73,6 +73,7 @@ class Brain(private val ctx: Context) {
     // Kontext der aktuellen Anfrage
     private var screenProvider: (suspend () -> ScreenInput?)? = null
     private var spoken = true
+    private var conversation = false
     private var partial: ((String) -> Unit)? = null
     private var screenCache: ScreenInput? = null
     private var screenLoaded = false
@@ -108,8 +109,11 @@ class Brain(private val ctx: Context) {
         input: String,
         screen: (suspend () -> ScreenInput?)? = null,
         spoken: Boolean = true,
+        conversation: Boolean = false,
+        attachment: String? = null,
         onPartial: ((String) -> Unit)? = null,
     ): Reply {
+        this.conversation = conversation
         screenProvider = screen
         screenLoaded = false
         screenCache = null
@@ -122,7 +126,7 @@ class Brain(private val ctx: Context) {
             LangMode.AUTO -> Lang.detect(text, settings.lastLang)
         }
         settings.lastLang = lang
-        store.addChat(ChatMessage(true, text))
+        store.addChat(ChatMessage(true, text, attachment = attachment))
         val reply = try {
             route(text, lang)
         } catch (e: Exception) {
@@ -552,7 +556,11 @@ class Brain(private val ctx: Context) {
         val memText = if (mem.isEmpty()) "" else
             "\nDinge, die dir der Nutzer anvertraut hat (nutze sie, wenn passend):\n" + mem.joinToString("\n") { "- ${it.text}" }
         val languageRule = if (lang == "en") "Answer in English." else "Antworte auf Deutsch."
-        val style = if (spoken) """
+        val style = if (conversation) """
+            Ihr führt ein gesprochenes, lockeres Gespräch wie unter Freunden. Antworte natürlich und menschlich,
+            meist in ein bis drei kurzen Sätzen, ohne Aufzählungen, ohne Markdown, ohne Emojis.
+            Stell ruhig eine passende Rückfrage, wenn es das Gespräch weiterbringt. Keine Floskeln wie "Als KI …".
+        """.trimIndent() else if (spoken) """
             Deine Antwort wird vorgelesen: antworte in höchstens drei kurzen Sätzen, ohne Markdown, ohne Listen, ohne Emojis.
         """.trimIndent() else """
             Die Antwort wird gelesen: antworte so ausführlich wie nötig und so knapp wie möglich.
@@ -621,6 +629,16 @@ class Brain(private val ctx: Context) {
     // ================= Geräteaktionen =================
 
     private suspend fun deviceAction(text: String, l: String, lang: String): Reply? {
+        // Gesprächsmodus
+        if (Regex("gesprächsmodus|sprachmodus|unterhaltungsmodus|lass uns (reden|plaudern|sprechen|quatschen)|ich will (mit dir )?reden|voice mode|conversation mode|let'?s talk|let'?s chat").containsMatchIn(l)) {
+            runCatching {
+                ctx.startActivity(
+                    android.content.Intent(ctx, cc.szakacs.aurion.ui.VoiceModeActivity::class.java)
+                        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            }
+            return Reply(t(lang, "Gern, lass uns reden.", "Sure, let's talk."), lang)
+        }
         // Timer
         if (Regex("\\b(timer\\w*|countdown|kurzzeitwecker|eieruhr|stoppuhr)\\b").containsMatchIn(l)) return timerIntent(text, l, lang)
         // Anrufen

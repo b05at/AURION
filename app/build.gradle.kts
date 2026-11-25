@@ -85,4 +85,7 @@ dependencies {
     // Die AAR wird im CI-Build von den sherpa-onnx-Releases geladen (siehe .github/workflows/build.yml)
     implementation(files("libs/sherpa-onnx-1.13.7.aar"))
     implementation("org.apache.commons:commons-compress:1.27.1")
+
+    // Android Auto (Car App Library)
+    implementation("androidx.car.app:app:1.7.0")
 }

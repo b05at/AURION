@@ -36,6 +36,8 @@ data class LensState(
     val digest: String? = null,
     /** Aurion wartet darauf, dass der Nutzer sagt, was er mit dem Anhang tun möchte */
     val askWhat: Boolean = false,
+    /** Anhang aus dem Chat: erscheint als Vorschau im Eingabefeld, Antworten landen im Chat */
+    val inChat: Boolean = false,
 )
 
 data class AssistUiState(
@@ -148,12 +150,16 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
         speech.stop()
         _state.value = _state.value.copy(orb = OrbState.THINKING, transcript = text, level = 0f, hint = null, streaming = null)
         viewModelScope.launch {
-            val lensActive = _state.value.lens?.result != null
-            if (lensActive) _state.value = _state.value.copy(lens = _state.value.lens?.copy(answering = true, answer = null, askWhat = false))
-            if (lensActive && Regex("zusammenfass|fasse|überblick|worum geht|summar|overview|wichtigsten|to-?dos|fristen", RegexOption.IGNORE_CASE).containsMatchIn(text)) {
+            val lensNow = _state.value.lens
+            val hasContext = lensNow?.result != null
+            val inChat = lensNow?.inChat == true
+            val lensActive = hasContext && !inChat   // Antwort in der Lupen-Karte (Bildschirm-Lupe)
+            val attachmentLabel = if (inChat && lensNow?.askWhat == true) (lensNow.title ?: "Anhang") else null
+            if (hasContext) _state.value = _state.value.copy(lens = _state.value.lens?.copy(answering = lensActive, answer = if (lensActive) null else _state.value.lens?.answer, askWhat = false))
+            if (hasContext && Regex("zusammenfass|fasse|überblick|worum geht|summar|overview|wichtigsten|to-?dos|fristen", RegexOption.IGNORE_CASE).containsMatchIn(text)) {
                 ensureDigest()
             }
-            val reply = brain.handle(text, screenProvider(), spoken) { partial ->
+            val reply = brain.handle(text, screenProvider(), spoken, attachment = attachmentLabel) { partial ->
                 if (lensActive) _state.value = _state.value.copy(lens = _state.value.lens?.copy(answer = partial))
                 else _state.value = _state.value.copy(streaming = partial)
             }
@@ -190,7 +196,7 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
     /** Eingekreister Bereich oder geteiltes Bild analysieren */
     fun analyzeImage(bitmap: android.graphics.Bitmap, autoExplain: Boolean = true, title: String? = null) {
         speech.stop(); speaker.stop()
-        _state.value = _state.value.copy(lens = LensState(bitmap, title = title, askWhat = !autoExplain), reply = null, transcript = "", orb = OrbState.THINKING)
+        _state.value = _state.value.copy(lens = LensState(bitmap, title = title, askWhat = !autoExplain, inChat = !autoExplain), reply = null, transcript = "", orb = OrbState.THINKING)
         viewModelScope.launch {
             val r = Vision.analyze(bitmap)
             _state.value = _state.value.copy(lens = _state.value.lens?.copy(analyzing = false, result = r), orb = OrbState.IDLE)
@@ -208,7 +214,7 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
     /** Geteilten Text als Kontext übernehmen */
     fun analyzeText(text: String) {
         val r = cc.szakacs.aurion.vision.VisionResult(text, emptyList(), Vision.extractEntities(text))
-        _state.value = _state.value.copy(lens = LensState(null, analyzing = false, result = r, askWhat = true), reply = null)
+        _state.value = _state.value.copy(lens = LensState(null, analyzing = false, result = r, askWhat = true, inChat = true, title = "Geteilter Text"), reply = null)
     }
 
     // ================= Anhänge =================
@@ -217,7 +223,7 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
     fun attach(uri: android.net.Uri) {
         speech.stop(); speaker.stop()
         _state.value = _state.value.copy(
-            lens = LensState(null, analyzing = true, title = "Anhang", progress = "Öffne Anhang …"), reply = null
+            lens = LensState(null, analyzing = true, title = "Anhang", progress = "Öffne Anhang …", askWhat = true, inChat = true), reply = null
         )
         viewModelScope.launch {
             try {
@@ -242,7 +248,7 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
         }
         val r = cc.szakacs.aurion.vision.VisionResult(text, emptyList(), Vision.extractEntities(text.take(20_000)))
         _state.value = _state.value.copy(
-            lens = LensState(preview, analyzing = false, result = r, title = name, progress = null)
+            lens = LensState(preview, analyzing = false, result = r, title = name, progress = null, askWhat = true, inChat = true)
         )
         // Nicht automatisch loslegen – der Nutzer sagt, was er damit machen möchte
     }

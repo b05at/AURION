@@ -80,6 +80,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -160,10 +162,10 @@ fun ChatScreen(vm: AssistantViewModel, dictVm: DictationViewModel) {
         if (dict.active) {
             DictationCard(dictVm, Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp))
         }
-        st.lens?.let { lens ->
+        st.lens?.takeIf { !it.inChat }?.let { lens ->
             LensCard(lens, vm, Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) { vm.closeLens() }
         }
-        if (chat.isEmpty() && st.orb == OrbState.IDLE && st.lens == null && !dict.active) {
+        if (chat.isEmpty() && st.orb == OrbState.IDLE && (st.lens == null || st.lens?.inChat == true) && !dict.active) {
             Column(
                 Modifier.weight(1f).fillMaxWidth().padding(28.dp),
                 verticalArrangement = Arrangement.Center,
@@ -187,9 +189,9 @@ fun ChatScreen(vm: AssistantViewModel, dictVm: DictationViewModel) {
                 st.reply?.takeIf { (it.weather != null || it.shopping != null || it.card == cc.szakacs.aurion.brain.CardKind.CALL) && st.orb != OrbState.THINKING && chat.isNotEmpty() }?.let { r ->
                     item { ReplyCard(r, Modifier.fillMaxWidth(), showText = false, onCheckItem = { vm.checkOffShopping(it) }) }
                 }
-                if (st.streaming != null && st.lens == null) {
+                if (st.streaming != null && (st.lens == null || st.lens?.inChat == true)) {
                     item { Bubble(ChatMessage(false, st.streaming!!.ifBlank { "…" })) }
-                } else if (st.orb != OrbState.IDLE && !(st.lens != null && st.orb == OrbState.THINKING)) {
+                } else if (st.orb != OrbState.IDLE && !(st.lens != null && st.lens?.inChat != true && st.orb == OrbState.THINKING)) {
                     item {
                         Text(
                             when (st.orb) {
@@ -207,6 +209,24 @@ fun ChatScreen(vm: AssistantViewModel, dictVm: DictationViewModel) {
         }
         st.hint?.let {
             Text(it, color = AurionColors.Amber, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 20.dp))
+        }
+
+        // Anhang wie bei ChatGPT/Claude: Vorschau am Eingabefeld, Anweisung dazuschreiben oder -sagen
+        st.lens?.takeIf { it.inChat }?.let { lens ->
+            AttachmentComposer(lens, onRemove = { vm.closeLens() }, onSuggestion = { vm.submit(it) })
+        }
+
+        fun send() {
+            val lens = st.lens
+            when {
+                input.isNotBlank() -> vm.submit(input)
+                lens?.inChat == true && lens.askWhat -> vm.submit(
+                    if ((lens.result?.text?.length ?: 0) > 300) "Fasse das zusammen und nenne die wichtigsten Punkte."
+                    else "Was ist das? Beschreibe es kurz."
+                )
+                else -> return
+            }
+            input = ""
         }
 
         // Anhänge
@@ -286,20 +306,27 @@ fun ChatScreen(vm: AssistantViewModel, dictVm: DictationViewModel) {
                         )
                     },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(onSend = { vm.submit(input); input = "" }),
+                    keyboardActions = KeyboardActions(onSend = { send() }),
                     colors = TextFieldDefaults.colors(
                         focusedContainerColor = Color.Transparent,
                         unfocusedContainerColor = Color.Transparent,
                         focusedIndicatorColor = Color.Transparent,
                         unfocusedIndicatorColor = Color.Transparent,
                     ),
+                    maxLines = 5,
                     modifier = Modifier.weight(1f)
                 )
-                if (input.isNotBlank()) {
-                    IconButton(onClick = { vm.submit(input); input = "" }) {
+                if (input.isNotBlank() || st.lens?.askWhat == true) {
+                    IconButton(onClick = { send() }) {
                         Icon(Icons.AutoMirrored.Rounded.Send, "Senden", tint = AurionColors.Cyan)
                     }
                 }
+            }
+            IconButton(onClick = {
+                vm.stop()
+                ctx.startActivity(android.content.Intent(ctx, VoiceModeActivity::class.java))
+            }) {
+                Icon(Icons.Rounded.GraphicEq, "Gesprächsmodus", tint = AurionColors.Cyan)
             }
             Box(
                 Modifier
@@ -313,6 +340,67 @@ fun ChatScreen(vm: AssistantViewModel, dictVm: DictationViewModel) {
                     if (dict.active) (if (dict.recording) OrbState.LISTENING else if (dict.busy != null) OrbState.THINKING else OrbState.IDLE) else st.orb,
                     if (dict.active) dict.level else st.level, size = 76.dp
                 )
+            }
+        }
+    }
+}
+
+/** Anhang-Vorschau über dem Eingabefeld (wie bei ChatGPT/Claude) */
+@Composable
+private fun AttachmentComposer(lens: LensState, onRemove: () -> Unit, onSuggestion: (String) -> Unit) {
+    val isDoc = lens.image == null || (lens.result?.text?.length ?: 0) > 300 || (lens.title?.contains('.') == true && lens.title != "Foto")
+    Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp)) {
+        Row(
+            Modifier
+                .clip(RoundedCornerShape(16.dp))
+                .background(AurionColors.Glass)
+                .padding(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                Modifier.size(52.dp).clip(RoundedCornerShape(12.dp)).background(Color(0x33000000)),
+                contentAlignment = Alignment.Center
+            ) {
+                if (lens.image != null) androidx.compose.foundation.Image(
+                    lens.image.asImageBitmap(), null, contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                ) else Text("📄", fontSize = 24.sp)
+            }
+            Spacer(Modifier.size(10.dp))
+            Column(Modifier.widthIn(max = 220.dp)) {
+                Text(lens.title ?: "Anhang", color = AurionColors.TextHigh, style = MaterialTheme.typography.titleMedium, maxLines = 1)
+                when {
+                    lens.analyzing || lens.progress != null -> Shimmer(lens.progress ?: "Wird gelesen …")
+                    lens.askWhat -> Text("Sag oder schreib, was ich damit tun soll", color = AurionColors.TextMid, fontSize = 12.sp)
+                    else -> Text("Im Gespräch – frag gern weiter", color = AurionColors.Cyan, fontSize = 12.sp)
+                }
+            }
+            IconButton(onClick = onRemove) { Icon(Icons.Rounded.Close, "Anhang entfernen", tint = AurionColors.TextMid) }
+        }
+        if (lens.askWhat && !lens.analyzing) {
+            Row(
+                Modifier.padding(top = 6.dp).horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                val ideas = if (isDoc) listOf(
+                    "Zusammenfassen" to "Fasse das zusammen: Worum geht es, was sind die wichtigsten Punkte, gibt es Fristen, Beträge oder To-dos?",
+                    "Fristen & To-dos" to "Welche Fristen, Termine, Beträge und To-dos stehen darin?",
+                    "Einfach erklären" to "Erkläre den Inhalt in einfachen Worten.",
+                    "Antwort schreiben" to "Formuliere eine passende, höfliche Antwort darauf.",
+                    "Übersetzen" to "Übersetze den Inhalt ins Deutsche (falls er Deutsch ist: ins Englische).",
+                ) else listOf(
+                    "Was ist das?" to "Was ist auf dem Bild zu sehen? Beschreibe es.",
+                    "Text auslesen" to "Gib den erkannten Text sauber formatiert wieder.",
+                    "Übersetzen" to "Übersetze den Text auf dem Bild ins Deutsche.",
+                    "Auf Einkaufsliste" to "Setz das auf die Einkaufsliste",
+                )
+                ideas.forEach { (label, prompt) ->
+                    Text(
+                        label, color = AurionColors.TextHigh, fontSize = 13.sp,
+                        modifier = Modifier.clip(RoundedCornerShape(14.dp)).background(Color(0x262F7BFF))
+                            .clickable { onSuggestion(prompt) }.padding(horizontal = 12.dp, vertical = 7.dp)
+                    )
+                }
             }
         }
     }
@@ -340,7 +428,13 @@ private fun Bubble(m: ChatMessage) {
                 android.widget.Toast.makeText(ctx, "Kopiert", android.widget.Toast.LENGTH_SHORT).show()
             })
             .padding(horizontal = 16.dp, vertical = 11.dp)
-        if (m.fromUser) Text(m.text, style = MaterialTheme.typography.bodyLarge, color = AurionColors.TextHigh, modifier = mod)
+        if (m.fromUser) Column(mod) {
+            m.attachment?.let { a ->
+                Text("📎 $a", color = Color.White.copy(alpha = 0.8f), fontSize = 13.sp, maxLines = 1,
+                    modifier = Modifier.padding(bottom = 4.dp).clip(RoundedCornerShape(8.dp)).background(Color(0x33000000)).padding(horizontal = 8.dp, vertical = 3.dp))
+            }
+            Text(m.text, style = MaterialTheme.typography.bodyLarge, color = AurionColors.TextHigh)
+        }
         else MarkdownText(m.text, modifier = mod)
     }
 }

@@ -88,9 +88,23 @@ object NeuralTts {
         return out
     }
 
+    /** Laufender Sprach-Stream: Sätze nach und nach hinzufügen, am Ende finish() */
+    class Stream internal constructor(internal val ch: Channel<String>) {
+        fun add(text: String) { if (text.isNotBlank()) ch.trySend(text) }
+        fun finish() { ch.close() }
+    }
+
     fun speak(ctx: Context, id: String, text: String, speed: Float, onDone: () -> Unit) {
+        val s = stream(ctx, id, speed, onDone)
+        s.add(text)
+        s.finish()
+    }
+
+    /** Startet die Wiedergabe sofort; Text kann laufend nachgereicht werden (für Live-Antworten). */
+    fun stream(ctx: Context, id: String, speed: Float, onDone: () -> Unit): Stream {
         stop()
         val app = ctx.applicationContext
+        val input = Channel<String>(Channel.UNLIMITED)
         job = scope.launch {
             var t: AudioTrack? = null
             try {
@@ -117,24 +131,24 @@ object NeuralTts {
                 track = t
                 t.play()
 
-                val ch = Channel<FloatArray>(2)
+                val audio = Channel<FloatArray>(2)
                 val producer = launch {
-                    for (s in sentences(text)) {
-                        if (!isActive) break
-                        val audio = genLock.withLock { eng.generate(s, 0, speed.coerceIn(0.6f, 1.8f)) }
-                        // kleine Pause zwischen Sätzen
-                        ch.send(audio.samples + FloatArray(sr / 12))
+                    for (chunk in input) {
+                        for (sentence in sentences(chunk)) {
+                            if (!isActive) break
+                            val a = genLock.withLock { eng.generate(sentence, 0, speed.coerceIn(0.6f, 1.8f)) }
+                            audio.send(a.samples + FloatArray(sr / 12))
+                        }
                     }
-                    ch.close()
+                    audio.close()
                 }
                 var written = 0L
-                for (samples in ch) {
+                for (samples in audio) {
                     if (!isActive || track !== t) break
                     t.write(samples, 0, samples.size, AudioTrack.WRITE_BLOCKING)
                     written += samples.size
                 }
                 producer.join()
-                // warten, bis alles abgespielt ist
                 while (isActive && track === t && t.playbackHeadPosition < written - sr / 20) delay(40)
             } catch (_: Exception) {
             } finally {
@@ -143,6 +157,7 @@ object NeuralTts {
                 if (isActive) withContext(Dispatchers.Main) { onDone() }
             }
         }
+        return Stream(input)
     }
 
     fun stop() {

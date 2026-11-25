@@ -52,11 +52,13 @@ data class ChatMessage(
     val fromUser: Boolean,
     val text: String,
     val time: Long = System.currentTimeMillis(),
+    /** Name eines mitgeschickten Anhangs (Foto, Dokument) */
+    val attachment: String? = null,
 ) {
-    fun toJson() = JSONObject().put("u", fromUser).put("t", text).put("time", time)
+    fun toJson() = JSONObject().put("u", fromUser).put("t", text).put("time", time).put("a", attachment ?: "")
 
     companion object {
-        fun fromJson(o: JSONObject) = ChatMessage(o.getBoolean("u"), o.getString("t"), o.optLong("time"))
+        fun fromJson(o: JSONObject) = ChatMessage(o.getBoolean("u"), o.getString("t"), o.optLong("time"), o.optString("a").ifBlank { null })
     }
 }
 

@@ -136,6 +136,15 @@ class Speaker(ctx: Context) {
         })
     }
 
+    private fun resetListener() {
+        tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+            override fun onStart(utteranceId: String?) {}
+            override fun onDone(utteranceId: String?) { onDone?.invoke() }
+            @Deprecated("Deprecated in Java")
+            override fun onError(utteranceId: String?) { onDone?.invoke() }
+        })
+    }
+
     /** Installierte Stimmen für "de" bzw. "en" – Offline-Stimmen und höchste Qualität zuerst. */
     fun voices(lang: String): List<Voice> = runCatching {
         tts.voices.orEmpty()
@@ -157,6 +166,8 @@ class Speaker(ctx: Context) {
             }
         }
         if (!_ready.value) { done?.invoke(); return }
+        streaming = false
+        resetListener()
         val voice = wanted?.let { n -> runCatching { tts.voices?.firstOrNull { it.name == n } }.getOrNull() }
         if (voice != null) {
             tts.voice = voice
@@ -169,8 +180,62 @@ class Speaker(ctx: Context) {
         tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "aurion-" + System.nanoTime())
     }
 
+    // ---------- Streaming: Sätze vorlesen, während die Antwort noch entsteht ----------
+    private var neuralStream: cc.szakacs.aurion.speech.NeuralTts.Stream? = null
+    private var streamLang = "de"
+    private var queued = 0
+    private var finished = 0
+    private var streamEnded = false
+    private var streaming = false
+
+    /** Beginnt eine gestreamte Ansage. Danach say() für jeden Satz, zum Schluss end(). */
+    fun begin(lang: String, done: (() -> Unit)? = null) {
+        stop()
+        onDone = done
+        streamLang = lang
+        queued = 0; finished = 0; streamEnded = false; streaming = true
+        val wanted = if (lang == "en") settings.voiceEn else settings.voiceDe
+        if (wanted?.startsWith(NEURAL) == true) {
+            val id = wanted.removePrefix(NEURAL)
+            if (cc.szakacs.aurion.speech.Packs.isInstalled(appCtx, id)) {
+                neuralStream = cc.szakacs.aurion.speech.NeuralTts.stream(appCtx, id, settings.speechRate) { streaming = false; onDone?.invoke() }
+                return
+            }
+        }
+        val voice = wanted?.let { n -> runCatching { tts.voices?.firstOrNull { it.name == n } }.getOrNull() }
+        if (voice != null) tts.voice = voice else tts.setLanguage(if (lang == "en") Locale.US else Locale.GERMANY)
+        tts.setSpeechRate(settings.speechRate)
+        tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+            override fun onStart(utteranceId: String?) {}
+            override fun onDone(utteranceId: String?) { onPiece() }
+            @Deprecated("Deprecated in Java")
+            override fun onError(utteranceId: String?) { onPiece() }
+        })
+    }
+
+    private fun onPiece() {
+        if (!streaming) { onDone?.invoke(); return }
+        finished++
+        if (streamEnded && finished >= queued) { streaming = false; onDone?.invoke() }
+    }
+
+    fun say(text: String) {
+        if (text.isBlank()) return
+        neuralStream?.let { it.add(text); return }
+        queued++
+        tts.speak(text, TextToSpeech.QUEUE_ADD, null, "aurion-s-" + System.nanoTime())
+    }
+
+    fun end() {
+        neuralStream?.let { it.finish(); neuralStream = null; return }
+        streamEnded = true
+        if (finished >= queued) { streaming = false; onDone?.invoke() }
+    }
+
     fun stop() {
         onDone = null
+        streaming = false
+        neuralStream = null
         tts.stop()
         cc.szakacs.aurion.speech.NeuralTts.stop()
     }
