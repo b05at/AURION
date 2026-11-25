@@ -110,7 +110,7 @@ fun ReplyCard(reply: Reply, modifier: Modifier = Modifier, showText: Boolean = t
                             CardKind.SHOPPING -> Icons.Rounded.ShoppingBasket
                             CardKind.MEMORY -> Icons.Rounded.Psychology
                             CardKind.WEATHER -> Icons.Rounded.WbSunny
-                            CardKind.NONE -> Icons.Rounded.AutoAwesome
+                            else -> Icons.Rounded.AutoAwesome
                         }
                     )
                     Spacer(Modifier.width(10.dp))
