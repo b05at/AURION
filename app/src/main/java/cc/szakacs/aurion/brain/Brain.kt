@@ -31,7 +31,7 @@ data class ScreenInput(
     val digest: String? = null,
 )
 
-enum class CardKind { REMINDER, SHOPPING, MEMORY, WEATHER, TIMER, CALL, NONE }
+enum class CardKind { REMINDER, SHOPPING, MEMORY, WEATHER, TIMER, CALL, MESSAGE, NONE }
 
 data class Reply(
     val text: String,
@@ -49,6 +49,10 @@ data class Reply(
     val contacts: List<ContactMatch>? = null,
     /** Anruf braucht noch Berechtigungen */
     val needsCallPermission: Boolean = false,
+    /** WhatsApp-Nachricht: Empfänger und Text (zur Bestätigung) */
+    val msgTo: String? = null,
+    val msgText: String? = null,
+    val msgSent: Boolean = false,
 )
 
 data class ShoppingView(
@@ -92,6 +96,8 @@ class Brain(private val ctx: Context) {
         data class ReminderText(val time: LocalDateTime) : Pending()
         object ShoppingItems : Pending()
         data class TimerDuration(val label: String?) : Pending()
+        data class WhatsAppText(val name: String, val number: String) : Pending()
+        data class WhatsAppConfirm(val name: String, val number: String, val text: String) : Pending()
     }
 
     private var pending: Pending? = null
@@ -140,6 +146,14 @@ class Brain(private val ctx: Context) {
         val l = text.lowercase(Locale.ROOT)
 
         // --- Offene Rückfragen ---
+        (pending as? Pending.WhatsAppConfirm)?.let { p ->
+            pending = null
+            return when {
+                Regex("^(ja|jawohl|jo|passt|ok(ay)?|genau|senden|schick\\w*|sende\\w*|abschicken|yes|yep|send( it)?|go)\\b").containsMatchIn(l) -> sendWhatsApp(p.name, p.number, p.text, lang)
+                isCancel(l) || Regex("^(nein|nö|no|nicht)\\b").containsMatchIn(l) -> Reply(t(lang, "Okay, nicht gesendet.", "Okay, not sent."), lang)
+                else -> confirmWhatsApp(p.name, p.number, cleanMessage(text), lang)   // neue Formulierung
+            }
+        }
         pending?.let { p ->
             pending = null
             if (!isCancel(l)) when (p) {
@@ -149,6 +163,8 @@ class Brain(private val ctx: Context) {
                 }
                 is Pending.ReminderText -> return createReminder(cleanReminderText(text), p.time, lang)
                 Pending.ShoppingItems -> return addShopping(parseItems(text), lang)
+                is Pending.WhatsAppText -> return confirmWhatsApp(p.name, p.number, cleanMessage(text), lang)
+                is Pending.WhatsAppConfirm -> Unit
                 is Pending.TimerDuration -> {
                     val d = DurationParser.parse(text)
                     if (d != null) return startTimer(d.ms, p.label, lang)
@@ -639,6 +655,8 @@ class Brain(private val ctx: Context) {
             }
             return Reply(t(lang, "Gern, lass uns reden.", "Sure, let's talk."), lang)
         }
+        // WhatsApp
+        if (Regex("whats\\s?app").containsMatchIn(l)) whatsAppIntent(text, lang)?.let { return it }
         // Timer
         if (Regex("\\b(timer\\w*|countdown|kurzzeitwecker|eieruhr|stoppuhr)\\b").containsMatchIn(l)) return timerIntent(text, l, lang)
         // Anrufen
@@ -787,6 +805,79 @@ class Brain(private val ctx: Context) {
             "mir", "set", "a", "for", "the", "please", "countdown", "kurzzeitwecker", "eieruhr", "hey", "aurion", "neuen", "new", "von", "über", "in")
         val words = rest.split(Regex("\\s+")).map { it.trim(',', '.', '!', '?') }.filter { it.isNotBlank() && it.lowercase() !in filler }
         return words.joinToString(" ").takeIf { it.length in 2..39 }?.replaceFirstChar { it.uppercase() }
+    }
+
+    // ================= WhatsApp =================
+
+    /** "Schreib Mama auf WhatsApp, dass ich später komme" / "WhatsApp an Anna: bin gleich da" */
+    private suspend fun whatsAppIntent(text: String, lang: String): Reply? {
+        val patterns = listOf(
+            // schreib/schick (an) NAME auf/per/über WhatsApp (,|:|dass) TEXT
+            Regex("^(?:bitte\\s+)?(?:schreib\\w*|schick\\w*|send\\w*|text|message|nachricht)\\s+(?:eine\\s+nachricht\\s+)?(?:an\\s+|to\\s+)?(.+?)\\s+(?:auf|per|über|via|in|on|with|mit)\\s+whats\\s?app\\s*[,:]?\\s*(.*)$", RegexOption.IGNORE_CASE),
+            // schreib/schick eine WhatsApp(-Nachricht) an NAME (,|:|dass) TEXT
+            Regex("^(?:bitte\\s+)?(?:schreib\\w*|schick\\w*|send\\w*)\\s+(?:eine?\\s+|a\\s+)?whats\\s?app(?:[- ]?nachricht|\\s+message)?\\s+(?:an|to)\\s+(.+?)(?:\\s*[,:]\\s*|\\s+(?=dass\\b|that\\b)|$)(.*)$", RegexOption.IGNORE_CASE),
+            // WhatsApp an NAME: TEXT
+            Regex("^whats\\s?app\\s+(?:an|to)\\s+(.+?)(?:\\s*[,:]\\s*|\\s+(?=dass\\b|that\\b)|$)(.*)$", RegexOption.IGNORE_CASE),
+        )
+        val m = patterns.firstNotNullOfOrNull { it.find(text.trim()) } ?: return null
+        var name = m.groupValues[1].trim().trim(',', ':')
+        val body = m.groupValues[2].trim()
+        // "Mama dass ich später komme" (ohne Komma) auftrennen
+        Regex("^(.+?)\\s+(dass|that)\\s+(.+)$", RegexOption.IGNORE_CASE).find(name)?.let { name = it.groupValues[1] }
+        if (device.whatsappPackage() == null) return Reply(t(lang, "WhatsApp ist auf diesem Handy nicht installiert.", "WhatsApp isn't installed."), lang)
+
+        val (who, number) = if (Regex("^[+\\d][\\d /()-]{4,}$").matches(name)) name to name else {
+            if (!device.canReadContacts()) return Reply(
+                t(lang, "Damit ich Kontakte finde, erlaube bitte den Zugriff auf deine Kontakte.", "Please allow contacts access so I can find people."),
+                lang, CardKind.CALL, cardTitle = name, needsCallPermission = true
+            )
+            val c = device.findContacts(name).firstOrNull()
+                ?: return Reply(t(lang, "Ich habe „$name“ nicht in deinen Kontakten gefunden.", "I couldn't find \"$name\" in your contacts."), lang)
+            c.name to c.number
+        }
+        val msg = cleanMessage(body)
+        if (msg.isBlank()) {
+            pending = Pending.WhatsAppText(who, number)
+            return Reply(t(lang, "Was soll ich $who schreiben?", "What should I write to $who?"), lang, CardKind.MESSAGE, msgTo = who)
+        }
+        val final = if (Regex("^(dass|that)\\b", RegexOption.IGNORE_CASE).containsMatchIn(body) && llm.isAvailable) rephrase(msg, lang) else msg
+        return confirmWhatsApp(who, number, final, lang)
+    }
+
+    /** "dass ich später komme" -> "Ich komme später." */
+    private suspend fun rephrase(msg: String, lang: String): String = runCatching {
+        llm.chat(
+            t(lang, "Formuliere den folgenden Inhalt als kurze, natürliche WhatsApp-Nachricht in der Ich-Form (aus Sicht des Absenders). Gib nur die Nachricht aus, ohne Anführungszeichen.",
+                "Rewrite the following as a short, natural WhatsApp message in first person. Output only the message, without quotes."),
+            emptyList(), msg, temperature = 0.2f
+        ).trim().trim('"', '„', '“').ifBlank { msg }
+    }.getOrDefault(msg)
+
+    private fun cleanMessage(s: String): String = s.trim()
+        .replace(Regex("^(dass|das|that)\\s+", RegexOption.IGNORE_CASE), "")
+        .trim().trim(',', ':').trim()
+        .replaceFirstChar { it.uppercase() }
+
+    private fun confirmWhatsApp(name: String, number: String, text: String, lang: String): Reply {
+        if (text.isBlank()) {
+            pending = Pending.WhatsAppText(name, number)
+            return Reply(t(lang, "Was soll ich $name schreiben?", "What should I write to $name?"), lang, CardKind.MESSAGE, msgTo = name)
+        }
+        pending = Pending.WhatsAppConfirm(name, number, text)
+        return Reply(
+            t(lang, "An $name: „$text“ – senden?", "To $name: \"$text\" – send it?"),
+            lang, CardKind.MESSAGE, msgTo = name, msgText = text
+        )
+    }
+
+    private fun sendWhatsApp(name: String, number: String, text: String, lang: String): Reply {
+        val auto = cc.szakacs.aurion.assist.AutoSendService.isEnabled(ctx)
+        later { device.whatsapp(number, text) }
+        return Reply(
+            if (auto) t(lang, "Wird an $name gesendet.", "Sending to $name.")
+            else t(lang, "WhatsApp ist bereit – tippe nur noch auf Senden.", "WhatsApp is ready – just tap send."),
+            lang, CardKind.MESSAGE, msgTo = name, msgText = text, msgSent = true
+        )
     }
 
     // ================= Anrufe =================

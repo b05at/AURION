@@ -308,6 +308,29 @@ class DeviceActions(private val ctx: Context) {
         return if (canCall()) start(Intent(Intent.ACTION_CALL, tel)) else start(Intent(Intent.ACTION_DIAL, tel))
     }
 
+    /** Nummer ins internationale Format für WhatsApp (ohne +), Standard-Vorwahl Österreich */
+    fun intlNumber(raw: String): String {
+        val n = raw.filter { it.isDigit() || it == '+' }
+        return when {
+            n.startsWith("+") -> n.drop(1)
+            n.startsWith("00") -> n.drop(2)
+            n.startsWith("0") -> "43" + n.drop(1)
+            else -> n
+        }
+    }
+
+    fun whatsappPackage(): String? = listOf("com.whatsapp", "com.whatsapp.w4b").firstOrNull { p ->
+        runCatching { ctx.packageManager.getPackageInfo(p, 0); true }.getOrDefault(false)
+    }
+
+    /** WhatsApp-Chat mit fertigem Text öffnen; mit aktivierter Bedienungshilfe wird automatisch gesendet */
+    fun whatsapp(number: String, text: String): Boolean {
+        val pkg = whatsappPackage() ?: return false
+        val uri = Uri.parse("https://api.whatsapp.com/send?phone=${intlNumber(number)}&text=${Uri.encode(text)}")
+        if (cc.szakacs.aurion.assist.AutoSendService.isEnabled(ctx)) cc.szakacs.aurion.assist.AutoSend.arm()
+        return start(Intent(Intent.ACTION_VIEW, uri).setPackage(pkg))
+    }
+
     /** Kontakte nach Namen durchsuchen (beste Treffer zuerst) */
     fun findContacts(query: String): List<ContactMatch> {
         if (!canReadContacts()) return emptyList()

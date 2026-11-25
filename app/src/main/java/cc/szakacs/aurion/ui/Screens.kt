@@ -127,7 +127,7 @@ fun ChatScreen(vm: AssistantViewModel, dictVm: DictationViewModel) {
     val listState = rememberLazyListState()
 
     LaunchedEffect(chat.size, st.orb, st.reply, st.streaming?.length?.div(80)) {
-        val count = chat.size + (if (st.orb != OrbState.IDLE || st.streaming != null) 1 else 0) + (if (st.reply?.weather != null || st.reply?.shopping != null || st.reply?.card == cc.szakacs.aurion.brain.CardKind.CALL) 1 else 0)
+        val count = chat.size + (if (st.orb != OrbState.IDLE || st.streaming != null) 1 else 0) + (if (st.reply?.weather != null || st.reply?.shopping != null || st.reply?.card == cc.szakacs.aurion.brain.CardKind.CALL || st.reply?.card == cc.szakacs.aurion.brain.CardKind.MESSAGE) 1 else 0)
         if (count > 0) listState.animateScrollToItem(count - 1)
     }
 
@@ -186,8 +186,8 @@ fun ChatScreen(vm: AssistantViewModel, dictVm: DictationViewModel) {
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 items(chat) { Bubble(it) }
-                st.reply?.takeIf { (it.weather != null || it.shopping != null || it.card == cc.szakacs.aurion.brain.CardKind.CALL) && st.orb != OrbState.THINKING && chat.isNotEmpty() }?.let { r ->
-                    item { ReplyCard(r, Modifier.fillMaxWidth(), showText = false, onCheckItem = { vm.checkOffShopping(it) }) }
+                st.reply?.takeIf { (it.weather != null || it.shopping != null || it.card == cc.szakacs.aurion.brain.CardKind.CALL || it.card == cc.szakacs.aurion.brain.CardKind.MESSAGE) && st.orb != OrbState.THINKING && chat.isNotEmpty() }?.let { r ->
+                    item { ReplyCard(r, Modifier.fillMaxWidth(), showText = false, onCheckItem = { vm.checkOffShopping(it) }, onConfirm = { yes -> vm.submit(if (yes) "Ja" else "Abbrechen") }) }
                 }
                 if (st.streaming != null && (st.lens == null || st.lens?.inChat == true)) {
                     item { Bubble(ChatMessage(false, st.streaming!!.ifBlank { "…" })) }
@@ -635,6 +635,27 @@ fun SettingsScreen(tick: Int, dictVm: DictationViewModel, onOpenChat: () -> Unit
             Text(
                 "Tipp (Samsung): Einstellungen › Erweiterte Funktionen › Seitentaste › Gedrückt halten › Digitaler Assistent.",
                 style = MaterialTheme.typography.bodyMedium, color = AurionColors.TextLow, modifier = Modifier.padding(top = 8.dp)
+            )
+        }
+
+        // ---------- WhatsApp ----------
+        SectionTitle("WhatsApp per Sprache")
+        GlassCard(Modifier.fillMaxWidth()) {
+            val auto = remember(tick) { cc.szakacs.aurion.assist.AutoSendService.isEnabled(ctx) }
+            Text(
+                "Sag z. B. „Schreib Mama auf WhatsApp, dass ich später komme“. Aurion zeigt die Nachricht, fragt „Senden?“ und schickt sie nach deinem „Ja“.",
+                color = AurionColors.TextMid, style = MaterialTheme.typography.bodyMedium
+            )
+            StatusRow(
+                "Automatisch senden",
+                if (auto) "Aktiv – nach deinem „Ja“ wird direkt gesendet" else "Aus – WhatsApp öffnet sich mit fertigem Text, du tippst auf Senden",
+                auto, if (auto) null else "Einrichten"
+            ) {
+                runCatching { ctx.startActivity(Intent(AndroidSettings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            }
+            if (!auto) Text(
+                "In den Bedienungshilfen „Aurion – Nachrichten senden“ einschalten. Ist der Schalter gesperrt: App-Info von Aurion › ⋮ › „Eingeschränkte Einstellungen zulassen“ (gilt für Apps außerhalb des Play Stores). Aurion drückt nur den Senden-Knopf für Nachrichten, die du bestätigt hast, und liest keine Chats mit.",
+                color = AurionColors.TextLow, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 4.dp)
             )
         }
 

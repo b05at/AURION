@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Aurion</string>
+    <string name="autosend_desc">Drückt in WhatsApp den Senden-Knopf – ausschließlich für Nachrichten, die du Aurion per Sprache diktiert und mit „Ja“ bestätigt hast. Aurion liest dabei keine Chats mit.</string>
 </resources>

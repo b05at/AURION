@@ -31,6 +31,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -39,13 +40,19 @@ import cc.szakacs.aurion.brain.CardKind
 import cc.szakacs.aurion.brain.Reply
 import cc.szakacs.aurion.ui.theme.AurionColors
 
+/** true im Seitentasten-Overlay: Karten deckend statt durchscheinend, damit Text über jeder App lesbar ist */
+val LocalSolidCards = androidx.compose.runtime.staticCompositionLocalOf { false }
+
 @Composable
 fun GlassCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+    val solid = LocalSolidCards.current
     Column(
         modifier
+            .then(if (solid) Modifier.shadow(16.dp, RoundedCornerShape(24.dp)) else Modifier)
             .clip(RoundedCornerShape(24.dp))
             .background(
-                Brush.verticalGradient(listOf(Color(0x24FFFFFF), Color(0x10FFFFFF)))
+                if (solid) Brush.verticalGradient(listOf(Color(0xF7141B2E), Color(0xF70D1220)))
+                else Brush.verticalGradient(listOf(Color(0x24FFFFFF), Color(0x10FFFFFF)))
             )
             .border(BorderStroke(1.dp, AurionColors.GlassBorder), RoundedCornerShape(24.dp))
             .padding(18.dp),
@@ -54,7 +61,17 @@ fun GlassCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.()
 }
 
 @Composable
-fun ReplyCard(reply: Reply, modifier: Modifier = Modifier, showText: Boolean = true, onCheckItem: ((String) -> Unit)? = null) {
+fun ReplyCard(
+    reply: Reply,
+    modifier: Modifier = Modifier,
+    showText: Boolean = true,
+    onCheckItem: ((String) -> Unit)? = null,
+    onConfirm: ((Boolean) -> Unit)? = null,
+) {
+    if (reply.card == CardKind.MESSAGE) {
+        MessageCard(reply, modifier, onConfirm)
+        return
+    }
     if (reply.card == CardKind.TIMER && reply.timerId != null || reply.card == CardKind.CALL) {
         Column(modifier) {
             if (showText) {
@@ -120,6 +137,45 @@ fun ReplyCard(reply: Reply, modifier: Modifier = Modifier, showText: Boolean = t
                     Text(it, style = MaterialTheme.typography.bodyMedium, color = AurionColors.TextMid, modifier = Modifier.padding(top = 6.dp, start = 42.dp))
                 }
             }
+        }
+    }
+}
+
+/** WhatsApp-Nachricht zur Bestätigung (Vorschau wie eine Sprechblase) */
+@Composable
+fun MessageCard(reply: Reply, modifier: Modifier = Modifier, onConfirm: ((Boolean) -> Unit)?) {
+    GlassCard(modifier) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier.size(40.dp).clip(CircleShape).background(Brush.linearGradient(listOf(AurionColors.Blue, AurionColors.Cyan))),
+                contentAlignment = Alignment.Center
+            ) { Text(reply.msgTo?.firstOrNull()?.uppercase() ?: "?", color = Color.White, style = MaterialTheme.typography.titleMedium) }
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(reply.msgTo ?: "WhatsApp", color = AurionColors.TextHigh, style = MaterialTheme.typography.titleMedium)
+                Text("WhatsApp", color = AurionColors.TextMid, style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+        reply.msgText?.let { msg ->
+            Spacer(Modifier.size(12.dp))
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
+                Text(
+                    msg, color = Color.White, style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 18.dp, bottomEnd = 4.dp))
+                        .background(Brush.linearGradient(listOf(AurionColors.Blue, Color(0xFF3A66E8))))
+                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                )
+            }
+        }
+        Spacer(Modifier.size(12.dp))
+        when {
+            reply.msgSent -> Text("✓ " + reply.text, color = AurionColors.Cyan, style = MaterialTheme.typography.bodyMedium)
+            reply.msgText != null && onConfirm != null -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                PrimaryButton("Senden", Modifier.weight(1f)) { onConfirm(true) }
+                SecondaryButton("Abbrechen", Modifier.weight(1f)) { onConfirm(false) }
+            }
+            else -> Text(reply.text, color = AurionColors.TextMid, style = MaterialTheme.typography.bodyMedium)
         }
     }
 }

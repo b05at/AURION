@@ -156,6 +156,7 @@ fun DictationCard(vm: DictationViewModel, modifier: Modifier = Modifier) {
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (hasTasks) Action("✓ Google Tasks") { share(TASKS_PKG) }
                     if (hasKeep) Action("📝 Google Notizen") { share(KEEP_PKG) }
+                    if (installed(ctx, "com.whatsapp")) Action("💬 WhatsApp") { share("com.whatsapp") }
                     Action("↗ Teilen …") { share() }
                     Action("Kopieren") { copy(ctx, st.text); Toast.makeText(ctx, "Kopiert", Toast.LENGTH_SHORT).show() }
                     Action(if (st.savedId != null) "✓ Gespeichert" else "Speichern") { vm.save() }

@@ -28,6 +28,8 @@
         </intent>
         <package android:name="com.google.android.apps.tasks" />
         <package android:name="com.google.android.keep" />
+        <package android:name="com.whatsapp" />
+        <package android:name="com.whatsapp.w4b" />
         <!-- Apps per Sprache öffnen -->
         <intent>
             <action android:name="android.intent.action.MAIN" />
@@ -150,6 +152,20 @@
         <receiver
             android:name=".timers.TimerReceiver"
             android:exported="false" />
+
+        <!-- Optional: WhatsApp-Nachrichten nach Bestätigung automatisch senden -->
+        <service
+            android:name=".assist.AutoSendService"
+            android:exported="true"
+            android:label="Aurion – Nachrichten senden"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/autosend_service" />
+        </service>
 
         <!-- Gesprächsmodus (wie ChatGPT Voice) -->
         <activity

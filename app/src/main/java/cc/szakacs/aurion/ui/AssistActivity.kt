@@ -51,6 +51,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
@@ -229,32 +231,20 @@ private fun AssistOverlay(vm: AssistantViewModel, onClose: () -> Unit, onOpenApp
                 SelectionLayer(points, selection)
             }
         } else {
-            // Ohne Screenshot: dezenter Verlauf, Tippen schließt
+            // Ohne Screenshot: Bildschirm bleibt unverändert, Tippen daneben schließt
             Box(
                 Modifier
                     .fillMaxSize()
                     .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onClose() }
-                    .background(
-                        Brush.verticalGradient(
-                            0f to Color.Transparent,
-                            0.35f to Color(0x66000000),
-                            1f to Color(0xF2050814),
-                        )
-                    )
             )
         }
 
 
-        AnimatedVisibility(
-            visible = visible,
-            enter = fadeIn(tween(250)) + slideInVertically(tween(350)) { it / 3 },
-            exit = fadeOut(),
-            modifier = Modifier.align(Alignment.BottomCenter)
-        ) {
+        androidx.compose.runtime.CompositionLocalProvider(LocalSolidCards provides true) {
+        Box(Modifier.align(Alignment.BottomCenter)) {
             Column(
                 Modifier
                     .fillMaxWidth()
-                    .then(if (screenshot != null) Modifier.background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xCC050814)))) else Modifier)
                     .navigationBarsPadding()
                     .imePadding()
                     .padding(horizontal = 16.dp, vertical = 12.dp)
@@ -268,7 +258,7 @@ private fun AssistOverlay(vm: AssistantViewModel, onClose: () -> Unit, onOpenApp
                 } else {
                     st.reply?.let { reply ->
                         Box(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
-                            ReplyCard(reply, Modifier.fillMaxWidth(), onCheckItem = { vm.checkOffShopping(it) })
+                            ReplyCard(reply, Modifier.fillMaxWidth(), onCheckItem = { vm.checkOffShopping(it) }, onConfirm = { yes -> vm.submit(if (yes) "Ja" else "Abbrechen") })
                         }
                         Spacer(Modifier.height(14.dp))
                     }
@@ -287,10 +277,15 @@ private fun AssistOverlay(vm: AssistantViewModel, onClose: () -> Unit, onOpenApp
                 if (shown.isNotEmpty()) {
                     Text(
                         shown,
-                        style = MaterialTheme.typography.headlineSmall,
+                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Normal),
                         color = if (st.transcript.isNotBlank()) AurionColors.TextHigh else AurionColors.TextMid,
                         textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
+                        modifier = Modifier
+                            .padding(horizontal = 8.dp)
+                            .shadow(12.dp, RoundedCornerShape(22.dp))
+                            .clip(RoundedCornerShape(22.dp))
+                            .background(Color(0xF2111829))
+                            .padding(horizontal = 18.dp, vertical = 12.dp)
                     )
                     Spacer(Modifier.height(10.dp))
                 }
@@ -344,6 +339,7 @@ private fun AssistOverlay(vm: AssistantViewModel, onClose: () -> Unit, onOpenApp
                     AurionOrb(st.orb, st.level, size = if (lens != null) 96.dp else 150.dp)
                 }
             }
+        }
         }
     }
 }
