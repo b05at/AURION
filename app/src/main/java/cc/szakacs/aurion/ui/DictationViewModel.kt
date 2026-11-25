@@ -33,6 +33,8 @@ data class DictState(
     val error: String? = null,
     val savedId: String? = null,
     val seconds: Int = 0,
+    /** Diktat-Karte im Chat sichtbar */
+    val active: Boolean = false,
 )
 
 /**
@@ -65,9 +67,18 @@ class DictationViewModel(app: Application) : AndroidViewModel(app) {
 
     fun toggle() = if (_state.value.recording) stop() else start()
 
+    /** Diktat-Karte im Chat öffnen (ohne Aufnahme) */
+    fun open() = update { it.copy(active = true) }
+
+    /** Diktat-Karte schließen */
+    fun close() {
+        if (_state.value.recording) stop()
+        update { it.copy(active = false, error = null) }
+    }
+
     fun start() {
         if (_state.value.busy != null) return
-        update { it.copy(recording = true, error = null, partial = "", seconds = 0, savedId = null) }
+        update { it.copy(active = true, recording = true, error = null, partial = "", seconds = 0, savedId = null) }
         if (_state.value.mode == DictMode.WHISPER && whisperAvailable) startWhisper() else startLive()
         viewModelScope.launch {
             while (_state.value.recording) { delay(1000); update { it.copy(seconds = it.seconds + 1) } }
@@ -128,10 +139,10 @@ class DictationViewModel(app: Application) : AndroidViewModel(app) {
     fun transcribeFile(uri: Uri) {
         val pack = Packs.firstInstalledWhisper(ctx)
         if (pack == null) {
-            update { it.copy(error = "Für Audiodateien bitte zuerst ein Whisper-Modell laden (Einstellungen › Spracherkennung).") }
+            update { it.copy(active = true, error = "Für Audiodateien bitte zuerst ein Whisper-Modell laden (Einstellungen › Spracherkennung).") }
             return
         }
-        update { it.copy(busy = "Lese Audiodatei …", error = null) }
+        update { it.copy(active = true, busy = "Lese Audiodatei …", error = null) }
         viewModelScope.launch {
             try {
                 val samples = AudioDecoder.decode(ctx, uri) { p -> update { it.copy(busy = "Lese Audiodatei … ${(p * 100).toInt()} %") } }

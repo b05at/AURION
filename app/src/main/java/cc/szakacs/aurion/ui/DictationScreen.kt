@@ -26,6 +26,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material3.FilterChip
@@ -60,13 +61,12 @@ private fun installed(ctx: Context, pkg: String) =
     runCatching { ctx.packageManager.getPackageInfo(pkg, 0); true }.getOrDefault(false)
 
 /**
- * Diktat & Transkription: sprechen -> Text -> bearbeiten/aufräumen -> teilen (Google Tasks, Keep, …).
+ * Diktat-Karte im Chat: sprechen -> Text -> bearbeiten/aufräumen -> teilen (Google Tasks, Keep, …).
  */
 @Composable
-fun DictationScreen(vm: DictationViewModel) {
+fun DictationCard(vm: DictationViewModel, modifier: Modifier = Modifier) {
     val ctx = LocalContext.current
     val st by vm.state.collectAsState()
-    val history by Store.get(ctx).transcripts.collectAsState()
     val hasTasks = remember { installed(ctx, TASKS_PKG) }
     val hasKeep = remember { installed(ctx, KEEP_PKG) }
     val pickAudio = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let { vm.transcribeFile(it) } }
@@ -79,77 +79,67 @@ fun DictationScreen(vm: DictationViewModel) {
             .onFailure { runCatching { ctx.startActivity(vm.shareIntent(t)) } }
     }
 
-    LazyColumn(
-        Modifier.fillMaxSize().imePadding(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        // Modus & Sprache
-        item {
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    GlassCard(modifier) {
+        // Kopf
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier
+                    .size(64.dp)
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, enabled = st.busy == null) { vm.toggle() },
+                contentAlignment = Alignment.Center
+            ) {
+                AurionOrb(
+                    when {
+                        st.recording -> OrbState.LISTENING
+                        st.busy != null -> OrbState.THINKING
+                        else -> OrbState.IDLE
+                    },
+                    st.level, size = 64.dp
+                )
+            }
+            Spacer(Modifier.size(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Diktat", color = AurionColors.TextHigh, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    when {
+                        st.recording -> "● ${st.seconds / 60}:${"%02d".format(st.seconds % 60)} – Orb tippen zum Beenden"
+                        st.busy != null -> st.busy!!
+                        st.text.isBlank() -> "Orb tippen und lossprechen"
+                        else -> "Orb tippen zum Weiterdiktieren"
+                    },
+                    color = if (st.recording) AurionColors.Cyan else AurionColors.TextMid,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+            IconButton(onClick = { vm.close() }) { Icon(Icons.Rounded.Close, "Schließen", tint = AurionColors.TextMid) }
+        }
+
+        // Modus & Sprache (nur wenn nicht aufgenommen wird)
+        if (!st.recording && st.busy == null) {
+            Row(Modifier.horizontalScroll(rememberScrollState()).padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Chip("Live", st.mode == DictMode.LIVE) { vm.setMode(DictMode.LIVE) }
                 Chip("Whisper (genau)", st.mode == DictMode.WHISPER) { vm.setMode(DictMode.WHISPER) }
-                Spacer(Modifier.size(8.dp))
                 Chip("Deutsch", st.lang == "de") { vm.setLang("de") }
                 Chip("English", st.lang == "en") { vm.setLang("en") }
                 if (st.mode == DictMode.WHISPER) Chip("Auto", st.lang.isEmpty()) { vm.setLang("") }
             }
             if (st.mode == DictMode.WHISPER && !vm.whisperAvailable) {
                 Text(
-                    "Whisper ist noch nicht installiert – lade es unter Einstellungen › Spracherkennung. Bis dahin wird live erkannt.",
-                    color = AurionColors.Amber, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 6.dp)
+                    "Whisper noch nicht installiert (Einstellungen › Spracherkennung) – bis dahin live.",
+                    color = AurionColors.Amber, fontSize = 12.sp
                 )
-            }
-        }
-
-        // Aufnahme-Knopf
-        item {
-            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(
-                    Modifier
-                        .size(150.dp)
-                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, enabled = st.busy == null) { vm.toggle() },
-                    contentAlignment = Alignment.Center
-                ) {
-                    AurionOrb(
-                        when {
-                            st.recording -> OrbState.LISTENING
-                            st.busy != null -> OrbState.THINKING
-                            else -> OrbState.IDLE
-                        },
-                        st.level, size = 150.dp
-                    )
-                }
-                Text(
-                    when {
-                        st.recording -> "● Aufnahme  ${st.seconds / 60}:${"%02d".format(st.seconds % 60)}  – tippen zum Beenden"
-                        st.busy != null -> st.busy!!
-                        else -> "Tippen zum Diktieren"
-                    },
-                    color = if (st.recording) AurionColors.Cyan else AurionColors.TextMid,
-                    style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center
-                )
-                if (st.busy == null && !st.recording) {
-                    Text(
-                        "🎧 Sprachnachricht / Audiodatei transkribieren",
-                        color = AurionColors.Cyan, style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(top = 8.dp).clip(RoundedCornerShape(12.dp))
-                            .clickable { pickAudio.launch(arrayOf("audio/*", "video/mp4", "application/ogg")) }
-                            .padding(8.dp)
-                    )
-                }
-                st.error?.let { Text(it, color = AurionColors.Amber, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 6.dp)) }
             }
         }
 
         // Text
-        item {
+        if (st.text.isNotBlank() || st.partial.isNotBlank() || st.recording) {
+            Spacer(Modifier.size(8.dp))
             OutlinedTextField(
                 value = st.text + if (st.partial.isNotBlank()) (if (st.text.isEmpty()) "" else " ") + st.partial else "",
                 onValueChange = { if (!st.recording) vm.setText(it) },
-                modifier = Modifier.fillMaxWidth().heightIn(min = 160.dp),
-                placeholder = { Text("Hier erscheint dein Text …") },
-                shape = RoundedCornerShape(20.dp),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 90.dp, max = 260.dp),
+                placeholder = { Text("Ich höre zu …") },
+                shape = RoundedCornerShape(16.dp),
                 readOnly = st.recording || st.busy != null,
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = AurionColors.Cyan, unfocusedBorderColor = AurionColors.GlassBorder,
@@ -157,51 +147,57 @@ fun DictationScreen(vm: DictationViewModel) {
                 )
             )
         }
+        st.error?.let { Text(it, color = AurionColors.Amber, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 6.dp)) }
 
         // Aktionen
-        if (st.text.isNotBlank() && !st.recording) {
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (hasTasks) Action("✓ Google Tasks") { share(TASKS_PKG) }
-                        if (hasKeep) Action("📝 Google Notizen") { share(KEEP_PKG) }
-                        Action("↗ Teilen …") { share() }
-                        Action("Kopieren") {
-                            copy(ctx, st.text); Toast.makeText(ctx, "Kopiert", Toast.LENGTH_SHORT).show()
-                        }
-                        Action(if (st.savedId != null) "✓ Gespeichert" else "Speichern") { vm.save() }
-                    }
-                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Action("✨ Aufräumen") { vm.aiRewrite("clean") }
-                        Action("Zusammenfassen") { vm.aiRewrite("summary") }
-                        Action("To-do-Liste") { vm.aiRewrite("todo") }
-                        Action("Als E-Mail") { vm.aiRewrite("mail") }
-                        Action("Neu") { vm.clear() }
-                    }
+        if (!st.recording && st.busy == null) {
+            Spacer(Modifier.size(8.dp))
+            if (st.text.isNotBlank()) {
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (hasTasks) Action("✓ Google Tasks") { share(TASKS_PKG) }
+                    if (hasKeep) Action("📝 Google Notizen") { share(KEEP_PKG) }
+                    Action("↗ Teilen …") { share() }
+                    Action("Kopieren") { copy(ctx, st.text); Toast.makeText(ctx, "Kopiert", Toast.LENGTH_SHORT).show() }
+                    Action(if (st.savedId != null) "✓ Gespeichert" else "Speichern") { vm.save() }
                 }
+                Spacer(Modifier.size(8.dp))
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Action("✨ Aufräumen") { vm.aiRewrite("clean") }
+                    Action("Zusammenfassen") { vm.aiRewrite("summary") }
+                    Action("To-do-Liste") { vm.aiRewrite("todo") }
+                    Action("Als E-Mail") { vm.aiRewrite("mail") }
+                    Action("Neu") { vm.clear() }
+                }
+            } else {
+                Action("🎧 Sprachnachricht / Audiodatei transkribieren") { pickAudio.launch(arrayOf("audio/*", "video/mp4", "application/ogg")) }
             }
         }
+    }
+}
 
-        // Verlauf
-        if (history.isNotEmpty()) {
-            item { SectionTitle("Gespeicherte Transkripte") }
-            items(history, key = { it.id }) { t ->
-                GlassCard(Modifier.fillMaxWidth()) {
-                    Row(verticalAlignment = Alignment.Top) {
-                        Column(Modifier.weight(1f).clickable { vm.load(t) }) {
-                            Text(
-                                "${t.source} · " + DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(t.time)),
-                                color = AurionColors.TextLow, fontSize = 12.sp
-                            )
-                            Text(t.text, color = AurionColors.TextHigh, maxLines = 3, style = MaterialTheme.typography.bodyMedium)
-                        }
-                        IconButton(onClick = { runCatching { ctx.startActivity(vm.shareIntent(t.text)) } }) {
-                            Icon(Icons.Rounded.Share, "Teilen", tint = AurionColors.TextMid)
-                        }
-                        IconButton(onClick = { Store.get(ctx).deleteTranscript(t.id) }) {
-                            Icon(Icons.Rounded.DeleteOutline, "Löschen", tint = AurionColors.TextLow)
-                        }
-                    }
+/** Gespeicherte Transkripte (in den Einstellungen) */
+@Composable
+fun TranscriptHistory(vm: DictationViewModel, onOpen: () -> Unit) {
+    val ctx = LocalContext.current
+    val history by Store.get(ctx).transcripts.collectAsState()
+    GlassCard(Modifier.fillMaxWidth()) {
+        if (history.isEmpty()) {
+            Text("Noch keine Transkripte. Sag „Starte ein Diktat“ oder teile eine Sprachnachricht an Aurion.", color = AurionColors.TextMid, style = MaterialTheme.typography.bodyMedium)
+        }
+        history.take(30).forEach { t ->
+            Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.Top) {
+                Column(Modifier.weight(1f).clickable { vm.load(t); vm.open(); onOpen() }) {
+                    Text(
+                        "${t.source} · " + DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(t.time)),
+                        color = AurionColors.TextLow, fontSize = 12.sp
+                    )
+                    Text(t.text, color = AurionColors.TextHigh, maxLines = 2, style = MaterialTheme.typography.bodyMedium)
+                }
+                IconButton(onClick = { runCatching { ctx.startActivity(vm.shareIntent(t.text)) } }) {
+                    Icon(Icons.Rounded.Share, "Teilen", tint = AurionColors.TextMid)
+                }
+                IconButton(onClick = { Store.get(ctx).deleteTranscript(t.id) }) {
+                    Icon(Icons.Rounded.DeleteOutline, "Löschen", tint = AurionColors.TextLow)
                 }
             }
         }

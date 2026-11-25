@@ -42,7 +42,9 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Description
+import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Image
+import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.PhotoCamera
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -114,10 +116,11 @@ import java.io.File
 val LocalResumeTick = androidx.compose.runtime.compositionLocalOf { 0 }
 
 @Composable
-fun ChatScreen(vm: AssistantViewModel) {
+fun ChatScreen(vm: AssistantViewModel, dictVm: DictationViewModel) {
     val ctx = LocalContext.current
     val chat by Store.get(ctx).chat.collectAsState()
     val st by vm.state.collectAsState()
+    val dict by dictVm.state.collectAsState()
     var input by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
 
@@ -151,10 +154,14 @@ fun ChatScreen(vm: AssistantViewModel) {
                 Text("Öffnen", color = AurionColors.Cyan, modifier = Modifier.padding(start = 8.dp))
             }
         }
+        // Diktat direkt im Chat
+        if (dict.active) {
+            DictationCard(dictVm, Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp))
+        }
         st.lens?.let { lens ->
             LensCard(lens, vm, Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) { vm.closeLens() }
         }
-        if (chat.isEmpty() && st.orb == OrbState.IDLE && st.lens == null) {
+        if (chat.isEmpty() && st.orb == OrbState.IDLE && st.lens == null && !dict.active) {
             Column(
                 Modifier.weight(1f).fillMaxWidth().padding(28.dp),
                 verticalArrangement = Arrangement.Center,
@@ -205,6 +212,7 @@ fun ChatScreen(vm: AssistantViewModel) {
         val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let { vm.attach(it) } }
         val takePhoto = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bmp -> bmp?.let { vm.attachPhoto(it) } }
         val pickDoc = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let { vm.attach(it) } }
+        val pickAudio = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let { dictVm.transcribeFile(it) } }
 
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
@@ -238,6 +246,16 @@ fun ChatScreen(vm: AssistantViewModel) {
                             text = { Text("Foto aufnehmen") },
                             leadingIcon = { Icon(Icons.Rounded.PhotoCamera, null, tint = AurionColors.Cyan) },
                             onClick = { attachMenu = false; takePhoto.launch(null) }
+                        )
+                        androidx.compose.material3.DropdownMenuItem(
+                            text = { Text("Diktat starten") },
+                            leadingIcon = { Icon(Icons.Rounded.Mic, null, tint = AurionColors.Cyan) },
+                            onClick = { attachMenu = false; vm.stop(); dictVm.start() }
+                        )
+                        androidx.compose.material3.DropdownMenuItem(
+                            text = { Text("Sprachnachricht / Audio transkribieren") },
+                            leadingIcon = { Icon(Icons.Rounded.GraphicEq, null, tint = AurionColors.Cyan) },
+                            onClick = { attachMenu = false; pickAudio.launch(arrayOf("audio/*", "video/mp4", "application/ogg")) }
                         )
                         androidx.compose.material3.DropdownMenuItem(
                             text = { Text("Dokument (PDF, Word, Text …)") },
@@ -284,10 +302,15 @@ fun ChatScreen(vm: AssistantViewModel) {
             Box(
                 Modifier
                     .size(76.dp)
-                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { vm.toggleListening() },
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                        if (dict.active) dictVm.toggle() else vm.toggleListening()
+                    },
                 contentAlignment = Alignment.Center
             ) {
-                AurionOrb(st.orb, st.level, size = 76.dp)
+                AurionOrb(
+                    if (dict.active) (if (dict.recording) OrbState.LISTENING else if (dict.busy != null) OrbState.THINKING else OrbState.IDLE) else st.orb,
+                    if (dict.active) dict.level else st.level, size = 76.dp
+                )
             }
         }
     }
@@ -478,7 +501,7 @@ private fun BackupSection() {
 // ======================================================================
 
 @Composable
-fun SettingsScreen(tick: Int) {
+fun SettingsScreen(tick: Int, dictVm: DictationViewModel, onOpenChat: () -> Unit) {
     val ctx = LocalContext.current
     val settings = Settings.get(ctx)
     val scope = rememberCoroutineScope()
@@ -554,6 +577,9 @@ fun SettingsScreen(tick: Int) {
         // ---------- Spracherkennung (Whisper) ----------
         SectionTitle("Spracherkennung (Diktat)")
         WhisperSection()
+
+        SectionTitle("Gespeicherte Transkripte")
+        TranscriptHistory(dictVm, onOpenChat)
 
         // ---------- Wetter ----------
         SectionTitle("Wetter")

@@ -26,7 +26,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Forum
-import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.Psychology
 import androidx.compose.material.icons.rounded.Tune
@@ -96,9 +95,9 @@ class MainActivity : ComponentActivity() {
     private fun handleShare(intent: Intent?) {
         intent ?: return
         if (intent.getBooleanExtra("startDictation", false)) {
-            requestedTab = "dictate"
+            requestedTab = "chat"
             intent.removeExtra("startDictation")
-            window.decorView.postDelayed({ if (!dictVm.state.value.recording) dictVm.start() }, 900)
+            window.decorView.postDelayed({ if (!dictVm.state.value.recording) dictVm.start() }, 1500)
             return
         }
         val text = when (intent.action) {
@@ -111,7 +110,7 @@ class MainActivity : ComponentActivity() {
             else @Suppress("DEPRECATION") intent.getParcelableExtra<android.net.Uri>(Intent.EXTRA_STREAM)
         } else null
         if (streamUri != null && (intent.type?.startsWith("audio/") == true || intent.type == "application/ogg" || intent.type?.startsWith("video/") == true)) {
-            requestedTab = "dictate"
+            requestedTab = "chat"
             dictVm.transcribeFile(streamUri)
             return
         }
@@ -162,7 +161,7 @@ class MainActivity : ComponentActivity() {
 }
 
 private enum class Tab(val key: String, val label: String) {
-    CHAT("chat", "Aurion"), DICTATE("dictate", "Diktat"), REMINDERS("reminders", "Erinnerungen"), SETTINGS("settings", "Einstellungen")
+    CHAT("chat", "Aurion"), REMINDERS("reminders", "Erinnerungen"), SETTINGS("settings", "Einstellungen")
 }
 
 @Composable
@@ -198,10 +197,9 @@ private fun AurionMain(vm: AssistantViewModel, dictVm: DictationViewModel, tick:
             Header()
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when (tab) {
-                    Tab.CHAT -> ChatScreen(vm)
-                    Tab.DICTATE -> DictationScreen(dictVm)
+                    Tab.CHAT -> ChatScreen(vm, dictVm)
                     Tab.REMINDERS -> RemindersScreen(vm)
-                    Tab.SETTINGS -> SettingsScreen(tick)
+                    Tab.SETTINGS -> SettingsScreen(tick, dictVm) { tab = Tab.CHAT }
                 }
             }
             NavigationBar(containerColor = Color(0xCC070B16), tonalElevation = 0.dp) {
@@ -213,7 +211,6 @@ private fun AurionMain(vm: AssistantViewModel, dictVm: DictationViewModel, tick:
                             Icon(
                                 when (t) {
                                     Tab.CHAT -> Icons.Rounded.Forum
-                                    Tab.DICTATE -> Icons.Rounded.Mic
                                     Tab.REMINDERS -> Icons.Rounded.NotificationsActive
                                     Tab.SETTINGS -> Icons.Rounded.Tune
                                 }, t.label
