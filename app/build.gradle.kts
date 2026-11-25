@@ -74,6 +74,8 @@ dependencies {
 
     // Lokales LLM (on-device)
     implementation("com.google.mediapipe:tasks-genai:0.10.27")
+    // MPImage/BitmapImageBuilder für Bild-Eingaben (Gemma 3n)
+    implementation("com.google.mediapipe:tasks-core:0.10.21")
 
     // On-Device Texterkennung + Objekterkennung (gebündelte Modelle, offline)
     implementation("com.google.mlkit:text-recognition:16.0.1")
