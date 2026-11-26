@@ -74,7 +74,6 @@ fun DictationCard(vm: DictationViewModel, modifier: Modifier = Modifier) {
     fun share(pkg: String? = null) {
         val t = st.text.trim()
         if (t.isEmpty()) return
-        vm.save()
         runCatching { ctx.startActivity(vm.shareIntent(t, pkg)) }
             .onFailure { runCatching { ctx.startActivity(vm.shareIntent(t)) } }
     }

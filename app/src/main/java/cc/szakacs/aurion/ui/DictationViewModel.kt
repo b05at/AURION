@@ -35,6 +35,8 @@ data class DictState(
     val seconds: Int = 0,
     /** Diktat-Karte im Chat sichtbar */
     val active: Boolean = false,
+    /** Herkunft für das manuelle Speichern ("Diktat", "Audiodatei", …) */
+    val source: String = "Diktat",
 )
 
 /**
@@ -164,8 +166,8 @@ class DictationViewModel(app: Application) : AndroidViewModel(app) {
                 val text = WhisperEngine.transcribe(ctx, pack.id, samples, _state.value.lang) { p, sofar ->
                     update { it.copy(busy = "Transkribiere … ${(p * 100).toInt()} %", text = join(before, sofar)) }
                 }
-                update { it.copy(text = join(before, text), busy = null) }
-                if (text.isNotBlank()) save(source)
+                // Nicht automatisch speichern – nur über den "Speichern"-Knopf
+                update { it.copy(text = join(before, text), busy = null, source = source) }
             } catch (e: Exception) {
                 update { it.copy(busy = null, error = "Transkription fehlgeschlagen: ${e.message}") }
             }
@@ -198,7 +200,7 @@ class DictationViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun save(source: String = "Diktat") {
+    fun save(source: String = _state.value.source) {
         val t = _state.value.text.trim()
         if (t.isEmpty()) return
         val tr = Transcript(id = _state.value.savedId ?: java.util.UUID.randomUUID().toString(), text = t, source = source)
