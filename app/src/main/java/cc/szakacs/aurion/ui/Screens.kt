@@ -126,9 +126,10 @@ fun ChatScreen(vm: AssistantViewModel, dictVm: DictationViewModel) {
     var input by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
 
-    LaunchedEffect(chat.size, st.orb, st.reply, st.streaming?.length?.div(80)) {
-        val count = chat.size + (if (st.orb != OrbState.IDLE || st.streaming != null) 1 else 0) + (if (st.reply?.weather != null || st.reply?.shopping != null || st.reply?.card == cc.szakacs.aurion.brain.CardKind.CALL || st.reply?.card == cc.szakacs.aurion.brain.CardKind.MESSAGE) 1 else 0)
-        if (count > 0) listState.animateScrollToItem(count - 1)
+    // Liste ist unten verankert (reverseLayout): wachsende Antworten bleiben ohne Scroll-Sprünge sichtbar.
+    // Nur bei einer neuen Nachricht ganz nach unten springen.
+    LaunchedEffect(chat.size) {
+        if (chat.isNotEmpty()) listState.scrollToItem(0)
     }
 
     Column(Modifier.fillMaxSize().imePadding()) {
@@ -181,18 +182,16 @@ fun ChatScreen(vm: AssistantViewModel, dictVm: DictationViewModel) {
         } else {
             LazyColumn(
                 state = listState,
+                reverseLayout = true,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.Bottom)
             ) {
-                items(chat) { Bubble(it) }
-                st.reply?.takeIf { (it.weather != null || it.shopping != null || it.card == cc.szakacs.aurion.brain.CardKind.CALL || it.card == cc.szakacs.aurion.brain.CardKind.MESSAGE) && st.orb != OrbState.THINKING && chat.isNotEmpty() }?.let { r ->
-                    item { ReplyCard(r, Modifier.fillMaxWidth(), showText = false, onCheckItem = { vm.checkOffShopping(it) }, onConfirm = { yes -> vm.submit(if (yes) "Ja" else "Abbrechen") }) }
-                }
+                // Achtung: umgekehrte Reihenfolge – das Neueste zuerst (unten)
                 if (st.streaming != null && (st.lens == null || st.lens?.inChat == true)) {
-                    item { Bubble(ChatMessage(false, st.streaming!!.ifBlank { "…" })) }
+                    item(key = "streaming", contentType = "stream") { StreamingBubble(st.streaming!!) }
                 } else if (st.orb != OrbState.IDLE && !(st.lens != null && st.lens?.inChat != true && st.orb == OrbState.THINKING)) {
-                    item {
+                    item(key = "status", contentType = "status") {
                         Text(
                             when (st.orb) {
                                 OrbState.LISTENING -> st.transcript.ifBlank { "Ich höre zu …" }
@@ -204,6 +203,13 @@ fun ChatScreen(vm: AssistantViewModel, dictVm: DictationViewModel) {
                             modifier = Modifier.padding(8.dp)
                         )
                     }
+                }
+                st.reply?.takeIf { (it.weather != null || it.shopping != null || it.card == cc.szakacs.aurion.brain.CardKind.CALL || it.card == cc.szakacs.aurion.brain.CardKind.MESSAGE) && st.orb != OrbState.THINKING && chat.isNotEmpty() }?.let { r ->
+                    item(key = "card", contentType = "card") { ReplyCard(r, Modifier.fillMaxWidth(), showText = false, onCheckItem = { vm.checkOffShopping(it) }, onConfirm = { yes -> vm.submit(if (yes) "Ja" else "Abbrechen") }) }
+                }
+                val reversed = chat.asReversed()
+                items(reversed.size, key = { i -> reversed[i].let { m -> "${chat.size - 1 - i}-${m.time}-${m.fromUser}" } }, contentType = { "msg" }) { i ->
+                    Bubble(reversed[i])
                 }
             }
         }
@@ -342,6 +348,23 @@ fun ChatScreen(vm: AssistantViewModel, dictVm: DictationViewModel) {
                 )
             }
         }
+    }
+}
+
+/** Live-Antwort: schlanke Darstellung, damit das Schreiben flüssig bleibt */
+@Composable
+private fun StreamingBubble(text: String) {
+    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
+        Text(
+            text.ifBlank { "…" }.replace("**", "").replace(Regex("^#+\\s*", RegexOption.MULTILINE), ""),
+            style = MaterialTheme.typography.bodyLarge,
+            color = AurionColors.TextHigh,
+            modifier = Modifier
+                .widthIn(max = 360.dp)
+                .clip(RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp, bottomStart = 6.dp, bottomEnd = 22.dp))
+                .background(Brush.linearGradient(listOf(Color(0x26FFFFFF), Color(0x14FFFFFF))))
+                .padding(horizontal = 16.dp, vertical = 11.dp)
+        )
     }
 }
 

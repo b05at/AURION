@@ -27,7 +27,7 @@ import cc.szakacs.aurion.ui.theme.AurionColors
 /** Schlanker Markdown-Renderer: Überschriften, Listen, **fett**, *kursiv*, `Code` und Codeblöcke. */
 @Composable
 fun MarkdownText(md: String, color: Color = AurionColors.TextHigh, modifier: Modifier = Modifier) {
-    val blocks = splitBlocks(md)
+    val blocks = androidx.compose.runtime.remember(md) { splitBlocks(md) }
     Column(modifier) {
         blocks.forEach { (isCode, content) ->
             if (isCode) {

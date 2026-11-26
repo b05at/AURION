@@ -159,7 +159,12 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
             if (hasContext && Regex("zusammenfass|fasse|überblick|worum geht|summar|overview|wichtigsten|to-?dos|fristen", RegexOption.IGNORE_CASE).containsMatchIn(text)) {
                 ensureDigest()
             }
+            var lastEmit = 0L
             val reply = brain.handle(text, screenProvider(), spoken, attachment = attachmentLabel) { partial ->
+                // Live-Text gebündelt weitergeben – flüssiger und spart Neuaufbauten der Oberfläche
+                val now = android.os.SystemClock.uptimeMillis()
+                if (now - lastEmit < 50) return@handle
+                lastEmit = now
                 if (lensActive) _state.value = _state.value.copy(lens = _state.value.lens?.copy(answer = partial))
                 else _state.value = _state.value.copy(streaming = partial)
             }
