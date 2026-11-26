@@ -135,8 +135,7 @@ class AssistActivity : ComponentActivity() {
                 })
             }
         }
-        val byWake = cc.szakacs.aurion.speech.WakeWord.consumeTrigger()
-        if (savedInstanceState == null && (byWake || Settings.get(this).listenOnOpen)) vm.startListening()
+        if (savedInstanceState == null && Settings.get(this).listenOnOpen) vm.startListening()
     }
 
     override fun onNewIntent(intent: Intent) {

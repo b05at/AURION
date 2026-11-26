@@ -903,9 +903,6 @@ fun SettingsScreen(tick: Int, dictVm: DictationViewModel, onOpenChat: () -> Unit
         MemorySection()
 
         // ---------- Sprache ----------
-        SectionTitle("Wake Word")
-        WakeWordSection()
-
         SectionTitle("Sprache")
         GlassCard(Modifier.fillMaxWidth()) {
             var mode by remember { mutableStateOf(settings.langMode) }
@@ -1244,108 +1241,6 @@ fun PackRow(pack: Pack, state: PackState, selected: Boolean = false, onSelect: (
             }
             is PackState.Failed -> Text(state.message, color = AurionColors.Amber, fontSize = 12.sp)
             else -> Unit
-        }
-    }
-}
-
-/** Wake Word: nur aktiv, solange ein Headset verbunden ist */
-@Composable
-private fun WakeWordSection() {
-    val ctx = LocalContext.current
-    val settings = Settings.get(ctx)
-    val packStates by Packs.states.collectAsState()
-    val status by cc.szakacs.aurion.speech.WakeWord.status.collectAsState()
-    var enabled by remember { mutableStateOf(settings.wakeEnabled) }
-    var word by remember { mutableStateOf(settings.wakeWord) }
-    var custom by remember { mutableStateOf(settings.wakeCustom) }
-    var sens by remember { mutableStateOf(settings.wakeSensitivity) }
-    val pack = Packs.wakeWord
-    val pState = packStates[pack.id] ?: Packs.state(ctx, pack.id)
-    val ready = pState is cc.szakacs.aurion.speech.PackState.Ready
-    // Nach dem Download automatisch starten
-    LaunchedEffect(ready) { if (ready) cc.szakacs.aurion.speech.WakeWord.apply(ctx) }
-
-    GlassCard(Modifier.fillMaxWidth()) {
-        Text(
-            "Sag das Wake Word, und Aurion öffnet sich – auch am Sperrbildschirm. Aurion hört nur zu, solange Kopfhörer oder ein Headset verbunden sind, und erkennt das Wort komplett offline.",
-            color = AurionColors.TextMid, style = MaterialTheme.typography.bodyMedium
-        )
-        PackRow(pack = pack, state = pState, onDelete = {
-            settings.wakeEnabled = false; enabled = false
-            cc.szakacs.aurion.speech.WakeWord.apply(ctx)
-            Packs.delete(ctx, pack.id)
-        })
-        if (ready) {
-            ToggleRow("Wake Word mit Headset", enabled) {
-                enabled = it; settings.wakeEnabled = it
-                cc.szakacs.aurion.speech.WakeWord.apply(ctx)
-            }
-            Spacer(Modifier.height(6.dp))
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                cc.szakacs.aurion.speech.WakeWord.choices.forEach { (key, v) ->
-                    val sel = word == key
-                    Text(
-                        v.first, fontSize = 13.sp,
-                        color = if (sel) Color(0xFF0B1020) else AurionColors.TextHigh,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(if (sel) AurionColors.Cyan else Color(0x262F7BFF))
-                            .clickable {
-                                word = key; settings.wakeWord = key
-                                if (key != "custom" || custom.isNotBlank()) cc.szakacs.aurion.speech.WakeWord.restart(ctx)
-                            }
-                            .padding(horizontal = 12.dp, vertical = 7.dp)
-                    )
-                }
-            }
-            if (word == "custom") {
-                Spacer(Modifier.height(8.dp))
-                var problem by remember { mutableStateOf<String?>(null) }
-                OutlinedTextField(
-                    value = custom, onValueChange = { custom = it.take(30) },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Eigenes Wake Word") },
-                    placeholder = { Text("z. B. Jarvis, Hey Buddy") },
-                    singleLine = true,
-                    shape = RoundedCornerShape(14.dp),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = {
-                        if (cc.szakacs.aurion.speech.WakeWord.canEncode(ctx, custom)) {
-                            problem = null; settings.wakeCustom = custom.trim()
-                            cc.szakacs.aurion.speech.WakeWord.restart(ctx)
-                        } else problem = "Nur Buchstaben A–Z verwenden"
-                    }),
-                    supportingText = { Text(problem ?: "Am besten 2–3 Silben, englisch ausgesprochen erkennt es am zuverlässigsten") },
-                    colors = fieldColors()
-                )
-            }
-            Spacer(Modifier.height(8.dp))
-            Text("Empfindlichkeit", color = AurionColors.TextHigh, style = MaterialTheme.typography.bodyMedium)
-            androidx.compose.material3.Slider(
-                value = sens, onValueChange = { sens = it },
-                onValueChangeFinished = { settings.wakeSensitivity = sens; cc.szakacs.aurion.speech.WakeWord.restart(ctx) },
-                colors = androidx.compose.material3.SliderDefaults.colors(thumbColor = AurionColors.Cyan, activeTrackColor = AurionColors.Cyan)
-            )
-            Text(
-                "Links = weniger Fehlalarme, rechts = reagiert leichter",
-                color = AurionColors.TextLow, fontSize = 12.sp
-            )
-            if (enabled) {
-                val txt = when (status) {
-                    cc.szakacs.aurion.speech.WakeWord.Status.LISTENING -> "● Hört auf „${cc.szakacs.aurion.speech.WakeWord.displayName(settings)}“"
-                    cc.szakacs.aurion.speech.WakeWord.Status.WAITING_HEADSET -> "Wartet auf ein Headset"
-                    cc.szakacs.aurion.speech.WakeWord.Status.PAUSED -> "Bereit – pausiert, solange Aurion offen ist"
-                    cc.szakacs.aurion.speech.WakeWord.Status.ERROR -> "Problem: ${cc.szakacs.aurion.speech.WakeWord.lastError ?: "unbekannt"}"
-                    cc.szakacs.aurion.speech.WakeWord.Status.NO_MODEL -> "Modell fehlt"
-                    cc.szakacs.aurion.speech.WakeWord.Status.OFF -> "Startet …"
-                }
-                Text(txt, color = if (status == cc.szakacs.aurion.speech.WakeWord.Status.ERROR) AurionColors.Amber else AurionColors.Cyan,
-                    style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 8.dp))
-                Text(
-                    "Nach einem Neustart des Handys einmal Aurion öffnen – Android erlaubt den Start des Mikrofon-Dienstes nur aus der App.",
-                    color = AurionColors.TextLow, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp)
-                )
-            }
         }
     }
 }

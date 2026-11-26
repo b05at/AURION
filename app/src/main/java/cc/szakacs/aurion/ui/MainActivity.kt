@@ -71,6 +71,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         requestedTab = intent?.getStringExtra("tab")
         cc.szakacs.aurion.speech.Packs.resume(this)
+        // Wake Word wurde entfernt: altes Erkennungsmodell aufräumen
+        runCatching { cc.szakacs.aurion.speech.Packs.dir(this, "sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01").deleteRecursively() }
         // Nur bei einem echten Neustart der App mit leerem Gespräch beginnen
         // (nicht, wenn Android die App im Hintergrund kurz entladen hat)
         if (savedInstanceState == null) {
@@ -145,8 +147,6 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         AppVisibility.started()
-        // Wake-Word-Dienst darf nur aus dem Vordergrund starten (Android-Vorgabe fürs Mikrofon)
-        cc.szakacs.aurion.speech.WakeWord.apply(this)
     }
 
     override fun onResume() {

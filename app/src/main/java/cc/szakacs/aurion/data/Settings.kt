@@ -65,23 +65,6 @@ class Settings private constructor(private val p: SharedPreferences) {
         get() = p.getString("replyStyle", "")!!
         set(v) = p.edit().putString("replyStyle", v).apply()
 
-    /** Wake Word (nur mit verbundenem Headset) */
-    var wakeEnabled: Boolean
-        get() = p.getBoolean("wakeOn", false)
-        set(v) = p.edit().putBoolean("wakeOn", v).apply()
-
-    var wakeWord: String
-        get() = p.getString("wakeWord", "aurion")!!
-        set(v) = p.edit().putString("wakeWord", v).apply()
-
-    var wakeCustom: String
-        get() = p.getString("wakeCustom", "")!!
-        set(v) = p.edit().putString("wakeCustom", v).apply()
-
-    var wakeSensitivity: Float
-        get() = p.getFloat("wakeSens", 0.5f)
-        set(v) = p.edit().putFloat("wakeSens", v).apply()
-
     /** Benachrichtigung, wenn eine Antwort im Hintergrund fertig ist */
     var notifyWhenDone: Boolean
         get() = p.getBoolean("notifyDone", true)
