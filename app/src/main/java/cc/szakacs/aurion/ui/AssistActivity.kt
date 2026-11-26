@@ -81,6 +81,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -107,6 +108,8 @@ class AssistActivity : ComponentActivity() {
     private val vm: AssistantViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        setShowWhenLocked(true)
+        setTurnScreenOn(true)
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
@@ -191,7 +194,11 @@ private fun AssistOverlay(vm: AssistantViewModel, onClose: () -> Unit, onOpenApp
         val screenshot = shot
         if (screenshot != null) {
             // Eingefrorener Bildschirm – darauf kann eingekreist werden (wie "Circle to Search")
-            Image(screenshot.asImageBitmap(), null, contentScale = ContentScale.FillBounds, modifier = Modifier.fillMaxSize())
+            // Hardware-Bitmap in eigener Ebene: wird nicht bei jedem Orb-Bild neu gezeichnet
+            val shown = remember(screenshot) {
+                runCatching { screenshot.copy(android.graphics.Bitmap.Config.HARDWARE, false) }.getOrNull() ?: screenshot
+            }
+            Image(shown.asImageBitmap(), null, contentScale = ContentScale.FillBounds, modifier = Modifier.fillMaxSize().graphicsLayer())
             Box(
                 Modifier
                     .fillMaxSize()
@@ -336,7 +343,7 @@ private fun AssistOverlay(vm: AssistantViewModel, onClose: () -> Unit, onOpenApp
                         ),
                     contentAlignment = Alignment.Center
                 ) {
-                    AurionOrb(st.orb, st.level, size = if (lens != null) 96.dp else 150.dp)
+                    AurionOrb(st.orb, { vm.level.value }, size = if (lens != null) 96.dp else 150.dp)
                 }
             }
         }

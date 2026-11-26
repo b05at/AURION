@@ -97,7 +97,8 @@
             android:excludeFromRecents="true"
             android:launchMode="singleTask"
             android:taskAffinity="cc.szakacs.aurion.assist"
-            android:showWhenLocked="false"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
             android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.Aurion.Overlay">
             <intent-filter>

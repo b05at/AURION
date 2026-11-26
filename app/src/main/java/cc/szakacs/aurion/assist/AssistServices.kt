@@ -19,7 +19,12 @@ import cc.szakacs.aurion.ui.AssistActivity
 import cc.szakacs.aurion.voice.Recognizers
 
 /** Macht Aurion als "Digitaler Assistent" auswählbar (Seitentaste / Assistent-Geste). */
-class AurionInteractionService : VoiceInteractionService()
+class AurionInteractionService : VoiceInteractionService() {
+    /** Seitentaste auf dem Sperrbildschirm: Overlay direkt dort anzeigen */
+    override fun onLaunchVoiceAssistFromKeyguard() {
+        runCatching { showSession(Bundle(), 0) }
+    }
+}
 
 class AurionSessionService : VoiceInteractionSessionService() {
     override fun onNewSession(args: Bundle?): VoiceInteractionSession = AurionSession(this)

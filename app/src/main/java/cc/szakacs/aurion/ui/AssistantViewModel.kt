@@ -62,6 +62,10 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(AssistUiState())
     val state: StateFlow<AssistUiState> = _state
 
+    /** Mikrofon-Pegel separat – wird nur vom Orb pro Bild gelesen, ohne die Oberfläche neu aufzubauen */
+    private val _level = MutableStateFlow(0f)
+    val level: StateFlow<Float> = _level
+
     /** Wird gesetzt, wenn eine Antwort fertig vorgelesen wurde (für Auto-Schließen im Overlay). */
     var onConversationIdle: (() -> Unit)? = null
 
@@ -95,7 +99,7 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
         }
         speech.start(lang, settings.lastLang, object : SpeechCallback {
             override fun onLevel(level: Float) {
-                _state.value = _state.value.copy(level = level)
+                _level.value = level
             }
 
             override fun onPartial(text: String) {
