@@ -18,6 +18,80 @@ data class ModelOption(
     val needsToken: Boolean = false,
 )
 
+/** Treffer bei der Hugging-Face-Suche */
+data class HfRepo(val id: String, val downloads: Long, val likes: Long)
+
+/** Modelldatei in einem Hugging-Face-Repository */
+data class HfFile(val repo: String, val path: String, val size: Long) {
+    val name: String get() = path.substringAfterLast('/')
+    val url: String get() = "https://huggingface.co/$repo/resolve/main/$path"
+}
+
+/** Zugriff auf Hugging Face: Modelle suchen und passende Dateien auflisten */
+object HfHub {
+    /** MediaPipe/LiteRT lädt .task-Bundles */
+    fun supported(path: String) = path.endsWith(".task", true)
+
+    private fun get(ctx: Context, url: String): String {
+        val c = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+        c.connectTimeout = 15000; c.readTimeout = 20000
+        c.setRequestProperty("Accept", "application/json")
+        Settings.get(ctx).hfToken?.takeIf { it.isNotBlank() }?.let { c.setRequestProperty("Authorization", "Bearer ${it.trim()}") }
+        try {
+            val code = c.responseCode
+            if (code == 401 || code == 403) throw IllegalStateException("Kein Zugriff – das Repository ist geschützt. Hugging-Face-Token eintragen und der Lizenz zustimmen.")
+            if (code == 404) throw IllegalStateException("Nicht gefunden")
+            if (code !in 200..299) throw IllegalStateException("Hugging Face antwortet mit Fehler $code")
+            return c.inputStream.bufferedReader().use { it.readText() }
+        } finally {
+            c.disconnect()
+        }
+    }
+
+    /** Suche – bevorzugt Repos, die .task-Modelle für Smartphones enthalten (LiteRT) */
+    suspend fun search(ctx: Context, query: String): List<HfRepo> = withContext(Dispatchers.IO) {
+        val q = java.net.URLEncoder.encode(query.trim(), "UTF-8")
+        val arr = org.json.JSONArray(get(ctx, "https://huggingface.co/api/models?search=$q&limit=30&sort=downloads&direction=-1"))
+        (0 until arr.length()).map { i ->
+            val o = arr.getJSONObject(i)
+            HfRepo(o.optString("id", o.optString("modelId")), o.optLong("downloads"), o.optLong("likes"))
+        }.filter { it.id.isNotBlank() }
+            .sortedByDescending { (if (it.id.startsWith("litert-community/") || it.id.contains("litert", true) || it.id.contains("mediapipe", true)) 1_000_000_000L else 0L) + it.downloads }
+    }
+
+    /** Alle Dateien eines Repos; supported() markiert die verwendbaren */
+    suspend fun files(ctx: Context, repo: String): List<HfFile> = withContext(Dispatchers.IO) {
+        val arr = org.json.JSONArray(get(ctx, "https://huggingface.co/api/models/$repo/tree/main?recursive=true"))
+        (0 until arr.length()).mapNotNull { i ->
+            val o = arr.getJSONObject(i)
+            if (o.optString("type") != "file") return@mapNotNull null
+            val size = o.optJSONObject("lfs")?.optLong("size") ?: o.optLong("size")
+            HfFile(repo, o.getString("path"), size)
+        }
+    }
+
+    sealed class Parsed {
+        data class Direct(val file: HfFile) : Parsed()
+        data class Repo(val repo: String) : Parsed()
+        data class Search(val query: String) : Parsed()
+    }
+
+    /** Link, "besitzer/repo" oder Suchbegriff erkennen */
+    fun parse(input: String): Parsed {
+        val t = input.trim().removeSuffix("/").substringBefore("?")
+        val path = t.removePrefix("https://").removePrefix("http://").removePrefix("www.").removePrefix("huggingface.co/").removePrefix("hf.co/")
+        val parts = path.split('/')
+        if (t.contains("huggingface.co/") || t.contains("hf.co/")) {
+            if (parts.size >= 5 && (parts[2] == "resolve" || parts[2] == "blob")) {
+                return Parsed.Direct(HfFile("${parts[0]}/${parts[1]}", parts.drop(4).joinToString("/"), 0))
+            }
+            if (parts.size >= 2) return Parsed.Repo("${parts[0]}/${parts[1]}")
+        }
+        if (Regex("^[\\w.-]+/[\\w.-]+$").matches(t)) return Parsed.Repo(t)
+        return Parsed.Search(t)
+    }
+}
+
 data class DownloadState(val running: Boolean, val progress: Float, val done: Boolean, val failed: Boolean)
 
 /** Verwaltet Download/Auswahl der lokalen Sprachmodelle. */
@@ -110,6 +184,18 @@ object ModelManager {
                 else -> DownloadState(true, p, false, false)
             }
         }
+    }
+
+    /** Modell aus einem beliebigen Hugging-Face-Repository laden */
+    fun startHfDownload(ctx: Context, f: HfFile) {
+        val safe = f.name.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        startDownload(ctx, ModelOption("hf:${f.repo}/${f.path}", f.name, f.repo, f.url, safe, sizeLabelOf(f.size)))
+    }
+
+    fun sizeLabelOf(b: Long): String = when {
+        b <= 0 -> "Größe unbekannt"
+        b >= 1L shl 30 -> String.format(java.util.Locale.GERMAN, "%.1f GB", b / 1073741824.0)
+        else -> "${b / 1048576} MB"
     }
 
     /** Eigene .task-Datei (per Dateiauswahl) übernehmen */

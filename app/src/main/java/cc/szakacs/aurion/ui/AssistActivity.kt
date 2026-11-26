@@ -135,7 +135,8 @@ class AssistActivity : ComponentActivity() {
                 })
             }
         }
-        if (savedInstanceState == null && Settings.get(this).listenOnOpen) vm.startListening()
+        val byWake = cc.szakacs.aurion.speech.WakeWord.consumeTrigger()
+        if (savedInstanceState == null && (byWake || Settings.get(this).listenOnOpen)) vm.startListening()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -184,11 +185,25 @@ private fun AssistOverlay(vm: AssistantViewModel, onClose: () -> Unit, onOpenApp
     var selection by remember { mutableStateOf<Rect?>(null) }
     var boxSize by remember { mutableStateOf(IntSize.Zero) }
 
-    // Automatisch schließen, wenn längere Zeit nichts passiert (nicht während der Lupe)
-    LaunchedEffect(st.orb, st.reply, typing, st.lens, shot) {
-        if (st.orb == OrbState.IDLE && !typing && st.lens == null) {
-            delay(if (shot != null) 25_000 else if (st.reply != null) 12_000 else 8_000)
-            onClose()
+    // Nach 20 Sekunden ohne Eingabe (Sprache, Tippen, Berührung) verschwindet der Orb –
+    // am Sperrbildschirm genauso wie entsperrt. Während Aurion denkt oder spricht, läuft die Zeit nicht.
+    var lastInput by remember { androidx.compose.runtime.mutableLongStateOf(android.os.SystemClock.uptimeMillis()) }
+    fun touch() { lastInput = android.os.SystemClock.uptimeMillis() }
+    LaunchedEffect(st.orb, st.transcript, st.reply, st.streaming, st.lens, typing, input) { touch() }
+    LaunchedEffect(Unit) {
+        vm.level.collect { if (it > 0.25f) touch() }   // deutliche Stimme hält das Fenster offen
+    }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(500)
+            val s = vm.state.value
+            val busy = s.orb == OrbState.THINKING || s.orb == OrbState.SPEAKING
+            if (busy) touch()
+            else if (android.os.SystemClock.uptimeMillis() - lastInput > 20_000) {
+                vm.stop()
+                onClose()
+                break
+            }
         }
     }
 
@@ -196,7 +211,20 @@ private fun AssistOverlay(vm: AssistantViewModel, onClose: () -> Unit, onOpenApp
         points.clear(); selection = null; vm.closeLens()
     }
 
-    Box(Modifier.fillMaxSize().onSizeChanged { boxSize = it }) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .onSizeChanged { boxSize = it }
+            // Jede Berührung zählt als Eingabe (ohne sie abzufangen)
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                        touch()
+                    }
+                }
+            }
+    ) {
         val screenshot = shot
         if (screenshot != null) {
             // Kein Standbild: der echte Bildschirm bleibt sichtbar. Eingekreist wird direkt darüber,

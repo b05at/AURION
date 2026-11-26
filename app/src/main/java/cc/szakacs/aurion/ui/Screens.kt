@@ -903,6 +903,9 @@ fun SettingsScreen(tick: Int, dictVm: DictationViewModel, onOpenChat: () -> Unit
         MemorySection()
 
         // ---------- Sprache ----------
+        SectionTitle("Wake Word")
+        WakeWordSection()
+
         SectionTitle("Sprache")
         GlassCard(Modifier.fillMaxWidth()) {
             var mode by remember { mutableStateOf(settings.langMode) }
@@ -1222,6 +1225,108 @@ fun PackRow(pack: Pack, state: PackState, selected: Boolean = false, onSelect: (
     }
 }
 
+/** Wake Word: nur aktiv, solange ein Headset verbunden ist */
+@Composable
+private fun WakeWordSection() {
+    val ctx = LocalContext.current
+    val settings = Settings.get(ctx)
+    val packStates by Packs.states.collectAsState()
+    val status by cc.szakacs.aurion.speech.WakeWord.status.collectAsState()
+    var enabled by remember { mutableStateOf(settings.wakeEnabled) }
+    var word by remember { mutableStateOf(settings.wakeWord) }
+    var custom by remember { mutableStateOf(settings.wakeCustom) }
+    var sens by remember { mutableStateOf(settings.wakeSensitivity) }
+    val pack = Packs.wakeWord
+    val pState = packStates[pack.id] ?: Packs.state(ctx, pack.id)
+    val ready = pState is cc.szakacs.aurion.speech.PackState.Ready
+    // Nach dem Download automatisch starten
+    LaunchedEffect(ready) { if (ready) cc.szakacs.aurion.speech.WakeWord.apply(ctx) }
+
+    GlassCard(Modifier.fillMaxWidth()) {
+        Text(
+            "Sag das Wake Word, und Aurion öffnet sich – auch am Sperrbildschirm. Aurion hört nur zu, solange Kopfhörer oder ein Headset verbunden sind, und erkennt das Wort komplett offline.",
+            color = AurionColors.TextMid, style = MaterialTheme.typography.bodyMedium
+        )
+        PackRow(pack = pack, state = pState, onDelete = {
+            settings.wakeEnabled = false; enabled = false
+            cc.szakacs.aurion.speech.WakeWord.apply(ctx)
+            Packs.delete(ctx, pack.id)
+        })
+        if (ready) {
+            ToggleRow("Wake Word mit Headset", enabled) {
+                enabled = it; settings.wakeEnabled = it
+                cc.szakacs.aurion.speech.WakeWord.apply(ctx)
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                cc.szakacs.aurion.speech.WakeWord.choices.forEach { (key, v) ->
+                    val sel = word == key
+                    Text(
+                        v.first, fontSize = 13.sp,
+                        color = if (sel) Color(0xFF0B1020) else AurionColors.TextHigh,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(if (sel) AurionColors.Cyan else Color(0x262F7BFF))
+                            .clickable {
+                                word = key; settings.wakeWord = key
+                                if (key != "custom" || custom.isNotBlank()) cc.szakacs.aurion.speech.WakeWord.restart(ctx)
+                            }
+                            .padding(horizontal = 12.dp, vertical = 7.dp)
+                    )
+                }
+            }
+            if (word == "custom") {
+                Spacer(Modifier.height(8.dp))
+                var problem by remember { mutableStateOf<String?>(null) }
+                OutlinedTextField(
+                    value = custom, onValueChange = { custom = it.take(30) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Eigenes Wake Word") },
+                    placeholder = { Text("z. B. Jarvis, Hey Buddy") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(14.dp),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = {
+                        if (cc.szakacs.aurion.speech.WakeWord.canEncode(ctx, custom)) {
+                            problem = null; settings.wakeCustom = custom.trim()
+                            cc.szakacs.aurion.speech.WakeWord.restart(ctx)
+                        } else problem = "Nur Buchstaben A–Z verwenden"
+                    }),
+                    supportingText = { Text(problem ?: "Am besten 2–3 Silben, englisch ausgesprochen erkennt es am zuverlässigsten") },
+                    colors = fieldColors()
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            Text("Empfindlichkeit", color = AurionColors.TextHigh, style = MaterialTheme.typography.bodyMedium)
+            androidx.compose.material3.Slider(
+                value = sens, onValueChange = { sens = it },
+                onValueChangeFinished = { settings.wakeSensitivity = sens; cc.szakacs.aurion.speech.WakeWord.restart(ctx) },
+                colors = androidx.compose.material3.SliderDefaults.colors(thumbColor = AurionColors.Cyan, activeTrackColor = AurionColors.Cyan)
+            )
+            Text(
+                "Links = weniger Fehlalarme, rechts = reagiert leichter",
+                color = AurionColors.TextLow, fontSize = 12.sp
+            )
+            if (enabled) {
+                val txt = when (status) {
+                    cc.szakacs.aurion.speech.WakeWord.Status.LISTENING -> "● Hört auf „${cc.szakacs.aurion.speech.WakeWord.displayName(settings)}“"
+                    cc.szakacs.aurion.speech.WakeWord.Status.WAITING_HEADSET -> "Wartet auf ein Headset"
+                    cc.szakacs.aurion.speech.WakeWord.Status.PAUSED -> "Bereit – pausiert, solange Aurion offen ist"
+                    cc.szakacs.aurion.speech.WakeWord.Status.ERROR -> "Problem: ${cc.szakacs.aurion.speech.WakeWord.lastError ?: "unbekannt"}"
+                    cc.szakacs.aurion.speech.WakeWord.Status.NO_MODEL -> "Modell fehlt"
+                    cc.szakacs.aurion.speech.WakeWord.Status.OFF -> "Startet …"
+                }
+                Text(txt, color = if (status == cc.szakacs.aurion.speech.WakeWord.Status.ERROR) AurionColors.Amber else AurionColors.Cyan,
+                    style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 8.dp))
+                Text(
+                    "Nach einem Neustart des Handys einmal Aurion öffnen – Android erlaubt den Start des Mikrofon-Dienstes nur aus der App.",
+                    color = AurionColors.TextLow, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun WhisperSection() {
     val ctx = LocalContext.current
@@ -1395,6 +1500,11 @@ private fun ModelSection() {
                     style = MaterialTheme.typography.bodyMedium, color = AurionColors.TextLow, modifier = Modifier.padding(top = 10.dp)
                 )
             }
+            Spacer(Modifier.height(16.dp))
+            HfModelPicker(installed.map { it.name }.toSet()) { f ->
+                ModelManager.startHfDownload(ctx, f)
+                dl = DownloadState(true, 0f, false, false)
+            }
             Spacer(Modifier.height(12.dp))
             SecondaryButton(if (importing) "Wird importiert …" else "Eigene .task-Datei wählen", Modifier.fillMaxWidth(), enabled = !importing) {
                 picker.launch(arrayOf("*/*"))
@@ -1403,6 +1513,137 @@ private fun ModelSection() {
                 "Modelle laufen komplett offline auf dem Gerät (MediaPipe / LiteRT). Empfohlen: WLAN für den Download.",
                 style = MaterialTheme.typography.bodyMedium, color = AurionColors.TextLow, modifier = Modifier.padding(top = 8.dp)
             )
+        }
+    }
+}
+
+/** Neue Modelle von Hugging Face hinzufügen: Suche, Repo-Name oder direkter Link */
+@Composable
+private fun HfModelPicker(installedNames: Set<String>, onDownload: (cc.szakacs.aurion.llm.HfFile) -> Unit) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var query by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var repos by remember { mutableStateOf<List<cc.szakacs.aurion.llm.HfRepo>>(emptyList()) }
+    var repo by remember { mutableStateOf<String?>(null) }
+    var files by remember { mutableStateOf<List<cc.szakacs.aurion.llm.HfFile>>(emptyList()) }
+    var confirm by remember { mutableStateOf<cc.szakacs.aurion.llm.HfFile?>(null) }
+    val hub = cc.szakacs.aurion.llm.HfHub
+
+    fun openRepo(r: String) {
+        repo = r; busy = true; error = null; files = emptyList()
+        scope.launch {
+            runCatching { hub.files(ctx, r) }
+                .onSuccess { all ->
+                    files = all.filter { hub.supported(it.path) }.sortedBy { it.size }
+                    if (files.isEmpty()) error = if (all.any { it.path.endsWith(".gguf", true) })
+                        "Dieses Repo hat nur GGUF-Dateien. Aurion braucht LiteRT/MediaPipe-Modelle (.task) – such z. B. bei „litert-community“."
+                    else "Keine passende .task-Datei in diesem Repo."
+                }
+                .onFailure { error = it.message }
+            busy = false
+        }
+    }
+
+    fun go() {
+        if (query.isBlank()) return
+        error = null
+        when (val p = hub.parse(query)) {
+            is cc.szakacs.aurion.llm.HfHub.Parsed.Direct ->
+                if (hub.supported(p.file.path)) confirm = p.file else error = "Aurion kann nur .task-Modelle (LiteRT/MediaPipe) laden."
+            is cc.szakacs.aurion.llm.HfHub.Parsed.Repo -> { repos = emptyList(); openRepo(p.repo) }
+            is cc.szakacs.aurion.llm.HfHub.Parsed.Search -> {
+                busy = true; repo = null; files = emptyList()
+                scope.launch {
+                    runCatching { hub.search(ctx, p.query) }
+                        .onSuccess { repos = it; if (it.isEmpty()) error = "Nichts gefunden." }
+                        .onFailure { error = it.message ?: "Keine Verbindung" }
+                    busy = false
+                }
+            }
+        }
+    }
+
+    confirm?.let { f ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { confirm = null },
+            title = { Text("Modell herunterladen?") },
+            text = {
+                Text("${f.name}\n${f.repo} · ${cc.szakacs.aurion.llm.ModelManager.sizeLabelOf(f.size)}\n\nGeschützte Modelle (z. B. Gemma, Llama) brauchen den Hugging-Face-Token und deine Zustimmung zur Lizenz auf der Modellseite.")
+            },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = { onDownload(f); confirm = null }) { Text("Herunterladen") } },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { confirm = null }) { Text("Abbrechen") } },
+            containerColor = AurionColors.SurfaceHigh,
+        )
+    }
+
+    Text("Von Hugging Face hinzufügen", style = MaterialTheme.typography.titleMedium, color = AurionColors.TextHigh)
+    Text(
+        "Suchbegriff, Repo-Name (z. B. litert-community/Phi-4-mini-instruct) oder Link zu einer .task-Datei.",
+        style = MaterialTheme.typography.bodyMedium, color = AurionColors.TextMid
+    )
+    Spacer(Modifier.height(6.dp))
+    OutlinedTextField(
+        value = query, onValueChange = { query = it },
+        modifier = Modifier.fillMaxWidth(),
+        placeholder = { Text("z. B. gemma, phi, llama, qwen") },
+        leadingIcon = { Icon(Icons.Rounded.Search, null, tint = AurionColors.TextLow) },
+        singleLine = true,
+        shape = RoundedCornerShape(14.dp),
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+        keyboardActions = KeyboardActions(onSearch = { go() }),
+        colors = fieldColors()
+    )
+    Row(Modifier.padding(top = 6.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        listOf("litert-community", "gemma", "qwen", "phi", "llama", "deepseek").forEach { q ->
+            Text(
+                q, color = AurionColors.TextHigh, fontSize = 13.sp,
+                modifier = Modifier.clip(RoundedCornerShape(14.dp)).background(Color(0x262F7BFF))
+                    .clickable { query = if (q == "litert-community") q else "litert $q"; go() }
+                    .padding(horizontal = 12.dp, vertical = 7.dp)
+            )
+        }
+    }
+    if (busy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), color = AurionColors.Cyan)
+    error?.let { Text(it, color = AurionColors.Amber, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 6.dp)) }
+
+    if (repo != null) {
+        Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(repo!!, color = AurionColors.Cyan, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+            if (repos.isNotEmpty()) Text("← Treffer", color = AurionColors.TextMid, fontSize = 13.sp,
+                modifier = Modifier.clickable { repo = null; files = emptyList(); error = null }.padding(6.dp))
+        }
+        files.forEach { f ->
+            val have = installedNames.contains(f.name.replace(Regex("[^A-Za-z0-9._-]"), "_"))
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                    .clickable(enabled = !have) { confirm = f }.padding(vertical = 8.dp, horizontal = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(f.name, color = AurionColors.TextHigh, style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        cc.szakacs.aurion.llm.ModelManager.sizeLabelOf(f.size) +
+                            (if (f.name.contains("gemma-3n", true)) " · sieht Bilder" else "") + (if (have) " · installiert" else ""),
+                        color = AurionColors.TextLow, fontSize = 12.sp
+                    )
+                }
+                if (!have) Text("Laden", color = AurionColors.Cyan, fontSize = 14.sp)
+            }
+        }
+    } else {
+        repos.take(15).forEach { r ->
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { openRepo(r.id) }.padding(vertical = 8.dp, horizontal = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(r.id, color = AurionColors.TextHigh, style = MaterialTheme.typography.bodyMedium)
+                    Text("${r.downloads} Downloads · ${r.likes} ♥", color = AurionColors.TextLow, fontSize = 12.sp)
+                }
+                Text("Öffnen", color = AurionColors.Cyan, fontSize = 14.sp)
+            }
         }
     }
 }

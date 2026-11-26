@@ -17,7 +17,7 @@ import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileInputStream
 
-enum class PackKind { VOICE, WHISPER }
+enum class PackKind { VOICE, WHISPER, KWS }
 
 /** Ein herunterladbares Sprachpaket (neuronale Stimme oder Whisper-Erkennung). */
 data class Pack(
@@ -64,7 +64,14 @@ object Packs {
         Pack("sherpa-onnx-whisper-tiny", PackKind.WHISPER, "multi", "Whisper Tiny", "Sehr schnell, weniger genau", "≈ 110 MB Download, 100 MB installiert", ASR + "sherpa-onnx-whisper-tiny.tar.bz2"),
     )
 
-    fun byId(id: String): Pack? = (voices + whisper).firstOrNull { it.id == id }
+    /** Lokale Wake-Word-Erkennung (Englisch, ~5 MB installiert) */
+    val wakeWord = Pack(
+        "sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01", PackKind.KWS, "en", "Wake-Word-Erkennung",
+        "Erkennt dein Wake Word offline", "≈ 20 MB Download, 5 MB installiert",
+        "https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01.tar.bz2"
+    )
+
+    fun byId(id: String): Pack? = (voices + whisper + wakeWord).firstOrNull { it.id == id }
 
     private val _states = MutableStateFlow<Map<String, PackState>>(emptyMap())
     val states: StateFlow<Map<String, PackState>> = _states
@@ -150,7 +157,8 @@ object Packs {
         try {
             target.deleteRecursively()
             target.mkdirs()
-            val isWhisper = byId(id)?.kind == PackKind.WHISPER
+            val kind = byId(id)?.kind
+            val isWhisper = kind == PackKind.WHISPER || kind == PackKind.KWS
             BZip2CompressorInputStream(BufferedInputStream(FileInputStream(archive), 1 shl 16)).use { bz ->
                 TarArchiveInputStream(bz).use { tar ->
                     var e = tar.nextEntry
@@ -158,7 +166,7 @@ object Packs {
                         // obersten Ordner entfernen
                         val rel = e.name.substringAfter('/', "")
                         val keep = rel.isNotEmpty() && !rel.contains("..") && !rel.startsWith("test_wavs") && !rel.endsWith("README.md") &&
-                            (!isWhisper || rel.endsWith("tokens.txt") || rel.contains(".int8.onnx"))
+                            (!isWhisper || rel.endsWith("tokens.txt") || rel.contains(".int8.onnx") || rel.endsWith("bpe.model"))
                         if (keep) {
                             val out = File(target, rel)
                             if (e.isDirectory) out.mkdirs()

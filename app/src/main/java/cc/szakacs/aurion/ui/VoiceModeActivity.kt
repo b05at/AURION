@@ -201,8 +201,14 @@ class VoiceModeActivity : ComponentActivity() {
         if (savedInstanceState == null) vm.listen()
     }
 
+    override fun onStart() {
+        super.onStart()
+        AppVisibility.started()
+    }
+
     override fun onStop() {
         super.onStop()
+        AppVisibility.stopped()
         if (!isChangingConfigurations) { vm.stopAll(); finish() }
     }
 }

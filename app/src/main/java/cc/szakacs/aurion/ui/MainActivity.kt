@@ -145,6 +145,8 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         AppVisibility.started()
+        // Wake-Word-Dienst darf nur aus dem Vordergrund starten (Android-Vorgabe fürs Mikrofon)
+        cc.szakacs.aurion.speech.WakeWord.apply(this)
     }
 
     override fun onResume() {
