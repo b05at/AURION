@@ -71,7 +71,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         requestedTab = intent?.getStringExtra("tab")
         cc.szakacs.aurion.speech.Packs.resume(this)
-        // Beim Öffnen der App mit leerem Gespräch starten
+        // Nur bei einem echten Neustart der App mit leerem Gespräch beginnen
+        // (nicht, wenn Android die App im Hintergrund kurz entladen hat)
         if (savedInstanceState == null) {
             vm.newConversation()
             handleShare(intent)
@@ -145,18 +146,11 @@ class MainActivity : ComponentActivity() {
         resumeTick.intValue++
     }
 
-    private var stoppedAt = 0L
-
-    override fun onRestart() {
-        super.onRestart()
-        // Nach mehr als einer Minute im Hintergrund wieder frisch starten
-        if (stoppedAt > 0 && System.currentTimeMillis() - stoppedAt > 60_000) vm.newConversation()
-    }
-
+    // Das Gespräch bleibt erhalten, solange die App läuft – auch im Hintergrund.
+    // Geleert wird nur bei einem neuen Start (nach Beenden der App), siehe onCreate.
     override fun onStop() {
         super.onStop()
-        stoppedAt = System.currentTimeMillis()
-        vm.stop()
+        vm.pauseAudio()
     }
 }
 

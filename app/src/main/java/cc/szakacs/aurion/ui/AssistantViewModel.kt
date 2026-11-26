@@ -122,6 +122,14 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = _state.value.copy(orb = OrbState.IDLE, level = 0f)
     }
 
+    /** App im Hintergrund: Mikrofon und Sprachausgabe anhalten, eine laufende Aufgabe aber weiterrechnen lassen */
+    fun pauseAudio() {
+        speech.stop()
+        speaker.stop()
+        if (_state.value.orb != OrbState.THINKING) _state.value = _state.value.copy(orb = OrbState.IDLE, level = 0f)
+        _level.value = 0f
+    }
+
     /** Liefert den Bildschirm-Kontext für das Brain: Auswahl > ganzer Bildschirm */
     private fun screenProvider(): (suspend () -> ScreenInput?) = provider@{
         val lens = _state.value.lens
