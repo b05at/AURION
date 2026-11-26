@@ -141,15 +141,22 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        AppVisibility.started()
+    }
+
     override fun onResume() {
         super.onResume()
         resumeTick.intValue++
+        AnswerNotifier.clear(this)
     }
 
     // Das Gespräch bleibt erhalten, solange die App läuft – auch im Hintergrund.
     // Geleert wird nur bei einem neuen Start (nach Beenden der App), siehe onCreate.
     override fun onStop() {
         super.onStop()
+        AppVisibility.stopped()
         vm.pauseAudio()
     }
 }

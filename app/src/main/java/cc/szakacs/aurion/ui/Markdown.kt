@@ -1,6 +1,7 @@
 package cc.szakacs.aurion.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -31,20 +32,38 @@ fun MarkdownText(md: String, color: Color = AurionColors.TextHigh, modifier: Mod
     Column(modifier) {
         blocks.forEach { (isCode, content) ->
             if (isCode) {
-                Text(
-                    content.trimEnd(),
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 13.sp,
-                    color = AurionColors.Silver,
-                    softWrap = false,
-                    modifier = Modifier
+                val ctx = androidx.compose.ui.platform.LocalContext.current
+                Column(
+                    Modifier
                         .padding(vertical = 6.dp)
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(10.dp))
                         .background(Color(0x55000000))
-                        .horizontalScroll(rememberScrollState())
-                        .padding(10.dp)
-                )
+                ) {
+                    // Code mit einem Tipp kopieren
+                    Text(
+                        "Kopieren",
+                        color = AurionColors.Cyan, fontSize = 12.sp,
+                        modifier = Modifier
+                            .align(androidx.compose.ui.Alignment.End)
+                            .clickable {
+                                copy(ctx, content.trimEnd())
+                                android.widget.Toast.makeText(ctx, "Code kopiert", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                    Text(
+                        content.trimEnd(),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 13.sp,
+                        color = AurionColors.Silver,
+                        softWrap = false,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(start = 10.dp, end = 10.dp, bottom = 10.dp)
+                    )
+                }
             } else {
                 content.trim('\n').lines().forEach { line ->
                     val t = line.trimEnd()

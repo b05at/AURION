@@ -62,6 +62,27 @@ data class ChatMessage(
     }
 }
 
+/** Gespeichertes Gespräch für den Verlauf (wie bei ChatGPT/Claude) */
+data class Conversation(
+    val id: String,
+    val title: String,
+    val updated: Long,
+    val messages: List<ChatMessage>,
+) {
+    fun toJson() = JSONObject().put("id", id).put("title", title).put("updated", updated)
+        .put("m", JSONArray().apply { messages.forEach { put(it.toJson()) } })
+
+    companion object {
+        fun fromJson(o: JSONObject): Conversation {
+            val a = o.optJSONArray("m") ?: JSONArray()
+            return Conversation(
+                o.getString("id"), o.optString("title"), o.optLong("updated"),
+                (0 until a.length()).mapNotNull { i -> runCatching { ChatMessage.fromJson(a.getJSONObject(i)) }.getOrNull() }
+            )
+        }
+    }
+}
+
 data class Transcript(
     val id: String = UUID.randomUUID().toString(),
     val text: String,
@@ -85,6 +106,15 @@ class Store private constructor(private val dir: File) {
     private val memoryFile = File(dir, "memory.json")
     private val chatFile = File(dir, "chat.json")
     private val transcriptFile = File(dir, "transcripts.json")
+    private val conversationsFile = File(dir, "conversations.json")
+    private val chatIdFile = File(dir, "chat_id.txt")
+
+    private val _conversations = MutableStateFlow(loadList(conversationsFile) { Conversation.fromJson(it) })
+    /** Frühere Gespräche, neuestes zuerst */
+    val conversations: StateFlow<List<Conversation>> = _conversations
+
+    private var chatId: String = runCatching { chatIdFile.readText().trim() }.getOrNull()?.ifBlank { null }
+        ?: UUID.randomUUID().toString().also { runCatching { chatIdFile.writeText(it) } }
 
     private val _transcripts = MutableStateFlow(loadList(transcriptFile) { Transcript.fromJson(it) })
     val transcripts: StateFlow<List<Transcript>> = _transcripts
@@ -169,6 +199,58 @@ class Store private constructor(private val dir: File) {
     fun clearChat() {
         _chat.value = emptyList()
         saveList(chatFile, emptyList<ChatMessage>()) { it.toJson() }
+    }
+
+    /** Letzte n Nachrichten entfernen (Neu generieren / Bearbeiten) */
+    @Synchronized
+    fun dropLastChat(n: Int) {
+        _chat.value = _chat.value.dropLast(n)
+        saveList(chatFile, _chat.value) { it.toJson() }
+    }
+
+    /** Aktuelles Gespräch im Verlauf sichern (nur wenn der Nutzer etwas gefragt hat) */
+    @Synchronized
+    fun archiveCurrent() {
+        val msgs = _chat.value
+        val first = msgs.firstOrNull { it.fromUser } ?: return
+        val title = first.text.replace(Regex("\\s+"), " ").trim().let { if (it.length > 60) it.take(57).trimEnd() + " …" else it }
+        val conv = Conversation(chatId, title, msgs.last().time, msgs)
+        _conversations.value = (listOf(conv) + _conversations.value.filterNot { it.id == chatId }).take(60)
+        saveList(conversationsFile, _conversations.value) { it.toJson() }
+    }
+
+    /** Neues, leeres Gespräch beginnen – das bisherige landet im Verlauf */
+    @Synchronized
+    fun startNewChat() {
+        archiveCurrent()
+        chatId = UUID.randomUUID().toString()
+        runCatching { chatIdFile.writeText(chatId) }
+        clearChat()
+    }
+
+    /** Früheres Gespräch fortsetzen */
+    @Synchronized
+    fun openConversation(id: String) {
+        val conv = _conversations.value.firstOrNull { it.id == id } ?: return
+        archiveCurrent()
+        chatId = conv.id
+        runCatching { chatIdFile.writeText(chatId) }
+        _chat.value = conv.messages
+        saveList(chatFile, _chat.value) { it.toJson() }
+    }
+
+    val currentChatId: String get() = chatId
+
+    @Synchronized
+    fun deleteConversation(id: String) {
+        _conversations.value = _conversations.value.filterNot { it.id == id }
+        saveList(conversationsFile, _conversations.value) { it.toJson() }
+    }
+
+    @Synchronized
+    fun clearConversations() {
+        _conversations.value = emptyList()
+        saveList(conversationsFile, emptyList<Conversation>()) { it.toJson() }
     }
 
     // ---------- Helfer ----------

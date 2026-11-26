@@ -51,6 +51,11 @@ data class AssistUiState(
     val lens: LensState? = null,
 )
 
+/** Prozessweiter Bereich für Anfragen, die ein geschlossenes Fenster überleben sollen */
+object AppScope : kotlinx.coroutines.CoroutineScope by kotlinx.coroutines.CoroutineScope(
+    kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main
+)
+
 class AssistantViewModel(app: Application) : AndroidViewModel(app) {
 
     private val ctx = app.applicationContext
@@ -161,7 +166,8 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
         if (text.isBlank()) return
         speech.stop()
         _state.value = _state.value.copy(orb = OrbState.THINKING, transcript = text, level = 0f, hint = null, streaming = null)
-        viewModelScope.launch {
+        // Läuft app-weit: eine Anfrage wird auch fertig, wenn das Fenster geschlossen wird
+        AppScope.launch {
             val lensNow = _state.value.lens
             val hasContext = lensNow?.result != null
             val inChat = lensNow?.inChat == true
@@ -180,6 +186,9 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
                 if (lensActive) _state.value = _state.value.copy(lens = _state.value.lens?.copy(answer = partial))
                 else _state.value = _state.value.copy(streaming = partial)
             }
+            // Im Hintergrund fertig geworden? Dann Bescheid geben
+            if (!AppVisibility.isVisible && settings.notifyWhenDone) AnswerNotifier.answerReady(ctx, text, reply.text)
+            if (cleared) return@launch
             _state.value = _state.value.copy(
                 reply = if (lensActive && reply.card == cc.szakacs.aurion.brain.CardKind.NONE) null else reply,
                 streaming = null,
@@ -309,14 +318,69 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = AssistUiState()
     }
 
-    /** Neues Gespräch: Verlauf, Rückfragen und Anzeige leeren */
+    /** Neues Gespräch: das bisherige wandert in den Verlauf, Rückfragen und Anzeige leeren */
     fun newConversation() {
+        if (_state.value.orb == OrbState.THINKING) stopGeneration()
         reset()
         brain.resetConversation()
-        cc.szakacs.aurion.data.Store.get(ctx).clearChat()
+        cc.szakacs.aurion.data.Store.get(ctx).startNewChat()
     }
 
+    /** Früheres Gespräch aus dem Verlauf fortsetzen */
+    fun openConversation(id: String) {
+        if (_state.value.orb == OrbState.THINKING) stopGeneration()
+        reset()
+        brain.resetConversation()
+        cc.szakacs.aurion.data.Store.get(ctx).openConversation(id)
+    }
+
+    /** Stopp-Knopf: laufende Antwort beenden */
+    fun stopGeneration() {
+        LlmEngine.get(ctx).stopGeneration()
+    }
+
+    val isBusy: Boolean get() = _state.value.orb == OrbState.THINKING
+
+    /** Letzte Antwort neu erzeugen */
+    fun regenerate() {
+        if (isBusy) return
+        val store = cc.szakacs.aurion.data.Store.get(ctx)
+        val chat = store.chat.value
+        val idx = chat.indexOfLast { it.fromUser }
+        if (idx < 0) return
+        val q = chat[idx].text
+        store.dropLastChat(chat.size - idx)
+        _state.value = _state.value.copy(reply = null)
+        submit(q, spoken = false)
+    }
+
+    /** Letzte eigene Nachricht zum Bearbeiten zurückholen (entfernt sie samt Antwort) */
+    fun editLast(): String? {
+        if (isBusy) return null
+        val store = cc.szakacs.aurion.data.Store.get(ctx)
+        val chat = store.chat.value
+        val idx = chat.indexOfLast { it.fromUser }
+        if (idx < 0) return null
+        val q = chat[idx].text
+        store.dropLastChat(chat.size - idx)
+        _state.value = _state.value.copy(reply = null)
+        return q
+    }
+
+    /** Eine Nachricht vorlesen */
+    fun readAloud(text: String) {
+        speech.stop()
+        _state.value = _state.value.copy(orb = OrbState.SPEAKING)
+        val lang = cc.szakacs.aurion.brain.Lang.detect(text, settings.lastLang)
+        speaker.speak(plain(text), lang, done = {
+            viewModelScope.launch { if (_state.value.orb == OrbState.SPEAKING) _state.value = _state.value.copy(orb = OrbState.IDLE) }
+        })
+    }
+
+    @Volatile private var cleared = false
+
     override fun onCleared() {
+        cleared = true
         speech.stop()
         speaker.shutdown()
         super.onCleared()

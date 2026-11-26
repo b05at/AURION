@@ -39,6 +39,15 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.AddComment
+import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.Stop
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Description
@@ -132,7 +141,36 @@ fun ChatScreen(vm: AssistantViewModel, dictVm: DictationViewModel) {
         if (chat.isNotEmpty()) listState.scrollToItem(0)
     }
 
+    var showHistory by remember { mutableStateOf(false) }
+    if (showHistory) HistorySheet(vm) { showHistory = false }
+
     Column(Modifier.fillMaxSize().imePadding()) {
+        // Verlauf und neues Gespräch wie bei ChatGPT/Claude
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            val convs by Store.get(ctx).conversations.collectAsState()
+            Row(
+                Modifier.clip(RoundedCornerShape(18.dp)).clickable { showHistory = true }.padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Rounded.History, null, tint = AurionColors.TextMid, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.size(6.dp))
+                Text(if (convs.isEmpty()) "Verlauf" else "Verlauf (${convs.size})", color = AurionColors.TextMid, fontSize = 14.sp)
+            }
+            Spacer(Modifier.weight(1f))
+            if (chat.isNotEmpty()) {
+                Row(
+                    Modifier.clip(RoundedCornerShape(18.dp)).clickable { vm.newConversation(); input = "" }.padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Rounded.AddComment, null, tint = AurionColors.Cyan, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.size(6.dp))
+                    Text("Neuer Chat", color = AurionColors.Cyan, fontSize = 14.sp)
+                }
+            }
+        }
         // Hinweis, wenn Android Aurion nach einem Update als Assistent abgemeldet hat
         val tick = LocalResumeTick.current
         val lost = remember(tick) { cc.szakacs.aurion.assist.AssistantRole.isLost(ctx).also { if (!it) cc.szakacs.aurion.assist.AssistantRole.sync(ctx) } }
@@ -173,10 +211,34 @@ fun ChatScreen(vm: AssistantViewModel, dictVm: DictationViewModel) {
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text("Hallo! Ich bin Aurion.", style = MaterialTheme.typography.displaySmall, color = AurionColors.TextHigh)
+                Spacer(Modifier.height(6.dp))
+                Text("Womit kann ich helfen?", style = MaterialTheme.typography.bodyLarge, color = AurionColors.TextMid)
+                Spacer(Modifier.height(18.dp))
+                val ideas = listOf(
+                    "✍️  Schreib eine freundliche Absage für das Meeting morgen",
+                    "💡  Erklär mir einfach, wie eine Wärmepumpe funktioniert",
+                    "🌦️  Wie wird das Wetter morgen?",
+                    "⏰  Erinnere mich in 20 Minuten an die Wäsche",
+                    "🛒  Setz Milch und Eier auf die Einkaufsliste",
+                    "🧮  Was sind 17 % von 2340?",
+                    "🌍  Übersetze „Wo ist der Bahnhof?“ ins Italienische",
+                )
+                ideas.forEach { idea ->
+                    Text(
+                        idea, color = AurionColors.TextHigh, style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier
+                            .padding(vertical = 4.dp)
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(AurionColors.Glass)
+                            .clickable { vm.submit(idea.substringAfter("  ").trim()) }
+                            .padding(horizontal = 14.dp, vertical = 11.dp)
+                    )
+                }
                 Spacer(Modifier.height(12.dp))
                 Text(
-                    "Probier zum Beispiel:\n„Erinnere mich in 20 Minuten an die Wäsche“\n„Setz Milch und Eier auf die Einkaufsliste“\n„Merk dir, dass mein Auto beim Bahnhof steht“\n„Remind me tomorrow at 8 to call Anna“\n„Was sind 17 % von 2340?“ · „5 Meilen in km“\n„Schreib eine Absage für das Meeting morgen“\n\nTeile Texte oder Bilder an Aurion – oder kreise über die Seitentaste etwas auf dem Bildschirm ein.",
-                    style = MaterialTheme.typography.bodyLarge, color = AurionColors.TextMid
+                    "Du kannst auch Fotos und Dokumente anhängen – oder über die Seitentaste etwas auf dem Bildschirm einkreisen.",
+                    style = MaterialTheme.typography.bodySmall, color = AurionColors.TextLow, textAlign = TextAlign.Center
                 )
             }
         } else {
@@ -208,8 +270,17 @@ fun ChatScreen(vm: AssistantViewModel, dictVm: DictationViewModel) {
                     item(key = "card", contentType = "card") { ReplyCard(r, Modifier.fillMaxWidth(), showText = false, onCheckItem = { vm.checkOffShopping(it) }, onConfirm = { yes -> vm.submit(if (yes) "Ja" else "Abbrechen") }) }
                 }
                 val reversed = chat.asReversed()
+                val lastAi = chat.indexOfLast { !it.fromUser }
+                val lastUser = chat.indexOfLast { it.fromUser }
+                val idle = st.orb != OrbState.THINKING
                 items(reversed.size, key = { i -> reversed[i].let { m -> "${chat.size - 1 - i}-${m.time}-${m.fromUser}" } }, contentType = { "msg" }) { i ->
-                    Bubble(reversed[i])
+                    val idx = chat.size - 1 - i
+                    Bubble(
+                        reversed[i],
+                        onRead = { vm.readAloud(it) },
+                        onRegenerate = if (idle && idx == lastAi && lastUser < idx) ({ vm.regenerate() }) else null,
+                        onEdit = if (idle && idx == lastUser) ({ vm.editLast()?.let { input = it } }) else null,
+                    )
                 }
             }
         }
@@ -322,7 +393,14 @@ fun ChatScreen(vm: AssistantViewModel, dictVm: DictationViewModel) {
                     maxLines = 5,
                     modifier = Modifier.weight(1f)
                 )
-                if (input.isNotBlank() || st.lens?.askWhat == true) {
+                if (st.orb == OrbState.THINKING && input.isBlank()) {
+                    IconButton(onClick = { vm.stopGeneration() }) {
+                        Box(
+                            Modifier.size(34.dp).clip(androidx.compose.foundation.shape.CircleShape).background(AurionColors.TextHigh),
+                            contentAlignment = Alignment.Center
+                        ) { Icon(Icons.Rounded.Stop, "Stopp", tint = Color(0xFF0B1020), modifier = Modifier.size(20.dp)) }
+                    }
+                } else if (input.isNotBlank() || st.lens?.askWhat == true) {
                     IconButton(onClick = { send() }) {
                         Icon(Icons.AutoMirrored.Rounded.Send, "Senden", tint = AurionColors.Cyan)
                     }
@@ -431,9 +509,14 @@ private fun AttachmentComposer(lens: LensState, onRemove: () -> Unit, onSuggesti
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun Bubble(m: ChatMessage) {
+private fun Bubble(
+    m: ChatMessage,
+    onRead: (String) -> Unit = {},
+    onRegenerate: (() -> Unit)? = null,
+    onEdit: (() -> Unit)? = null,
+) {
     val ctx = LocalContext.current
-    Box(Modifier.fillMaxWidth(), contentAlignment = if (m.fromUser) Alignment.CenterEnd else Alignment.CenterStart) {
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = if (m.fromUser) Alignment.End else Alignment.Start) {
         val shape = RoundedCornerShape(
             topStart = 22.dp, topEnd = 22.dp,
             bottomStart = if (m.fromUser) 22.dp else 6.dp,
@@ -459,6 +542,96 @@ private fun Bubble(m: ChatMessage) {
             Text(m.text, style = MaterialTheme.typography.bodyLarge, color = AurionColors.TextHigh)
         }
         else MarkdownText(m.text, modifier = mod)
+
+        // Aktionen wie bei ChatGPT/Claude
+        Row(Modifier.padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+            @Composable
+            fun act(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit) {
+                Box(
+                    Modifier.size(34.dp).clip(androidx.compose.foundation.shape.CircleShape).clickable(onClick = onClick),
+                    contentAlignment = Alignment.Center
+                ) { Icon(icon, label, tint = AurionColors.TextLow, modifier = Modifier.size(17.dp)) }
+            }
+            if (m.fromUser) {
+                onEdit?.let { act(Icons.Rounded.Edit, "Bearbeiten", it) }
+            } else {
+                act(Icons.Rounded.ContentCopy, "Kopieren") {
+                    copy(ctx, m.text)
+                    android.widget.Toast.makeText(ctx, "Kopiert", android.widget.Toast.LENGTH_SHORT).show()
+                }
+                act(Icons.Rounded.Share, "Teilen") {
+                    val i = android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain").putExtra(android.content.Intent.EXTRA_TEXT, m.text)
+                    runCatching { ctx.startActivity(android.content.Intent.createChooser(i, "Antwort teilen").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                }
+                act(Icons.AutoMirrored.Rounded.VolumeUp, "Vorlesen") { onRead(m.text) }
+                onRegenerate?.let { act(Icons.Rounded.Refresh, "Neu generieren", it) }
+            }
+        }
+    }
+}
+
+/** Frühere Gespräche durchsuchen, fortsetzen oder löschen */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun HistorySheet(vm: AssistantViewModel, onDismiss: () -> Unit) {
+    val ctx = LocalContext.current
+    val store = Store.get(ctx)
+    val convs by store.conversations.collectAsState()
+    var query by remember { mutableStateOf("") }
+    val fmt = remember { java.text.SimpleDateFormat("d. MMM, HH:mm", java.util.Locale.GERMAN) }
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = AurionColors.SurfaceHigh,
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
+            Text("Verlauf", style = MaterialTheme.typography.titleLarge, color = AurionColors.TextHigh)
+            Spacer(Modifier.height(10.dp))
+            OutlinedTextField(
+                value = query, onValueChange = { query = it },
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text("Gespräche durchsuchen") },
+                leadingIcon = { Icon(Icons.Rounded.Search, null, tint = AurionColors.TextLow) },
+                singleLine = true,
+                shape = RoundedCornerShape(14.dp),
+                colors = fieldColors()
+            )
+            Spacer(Modifier.height(8.dp))
+            val q = query.trim().lowercase()
+            val shown = if (q.isEmpty()) convs else convs.filter { c ->
+                c.title.lowercase().contains(q) || c.messages.any { it.text.lowercase().contains(q) }
+            }
+            if (shown.isEmpty()) {
+                Text(
+                    if (convs.isEmpty()) "Noch keine früheren Gespräche. Mit „Neuer Chat“ oder beim nächsten App-Start landet das aktuelle Gespräch hier."
+                    else "Nichts gefunden.",
+                    color = AurionColors.TextLow, modifier = Modifier.padding(vertical = 16.dp)
+                )
+            }
+            LazyColumn(Modifier.fillMaxWidth().heightIn(max = 520.dp)) {
+                items(shown, key = { it.id }) { c ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .clickable { vm.openConversation(c.id); onDismiss() }
+                            .padding(horizontal = 8.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(c.title.ifBlank { "Gespräch" }, color = AurionColors.TextHigh, style = MaterialTheme.typography.bodyLarge, maxLines = 1)
+                            val preview = c.messages.lastOrNull { !it.fromUser }?.text?.replace(Regex("[*_`#>]+"), "")?.replace('\n', ' ')?.take(80).orEmpty()
+                            Text(
+                                fmt.format(java.util.Date(c.updated)) + (if (preview.isNotBlank()) " · $preview" else ""),
+                                color = AurionColors.TextLow, fontSize = 12.sp, maxLines = 1
+                            )
+                        }
+                        IconButton(onClick = { store.deleteConversation(c.id) }) {
+                            Icon(Icons.Rounded.DeleteOutline, "Löschen", tint = AurionColors.TextLow)
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -539,6 +712,43 @@ fun RemindersScreen(vm: AssistantViewModel) {
 // Gedächtnis
 // ======================================================================
 
+/** Eigene Anweisungen: fließen in jede Antwort ein */
+@Composable
+private fun InstructionsSection() {
+    val ctx = LocalContext.current
+    val settings = Settings.get(ctx)
+    var about by remember { mutableStateOf(settings.aboutMe) }
+    var style by remember { mutableStateOf(settings.replyStyle) }
+    GlassCard(Modifier.fillMaxWidth()) {
+        Text(
+            "Was Aurion über dich wissen soll und wie er antworten soll. Gilt für alle Gespräche, bleibt auf dem Gerät.",
+            color = AurionColors.TextMid, style = MaterialTheme.typography.bodyMedium
+        )
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(
+            value = about, onValueChange = { about = it.take(800); settings.aboutMe = about },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Über mich") },
+            placeholder = { Text("z. B. Ich heiße …, arbeite als …, interessiere mich für …") },
+            minLines = 2, maxLines = 6,
+            shape = RoundedCornerShape(14.dp),
+            colors = fieldColors()
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = style, onValueChange = { style = it.take(800); settings.replyStyle = style },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("So soll Aurion antworten") },
+            placeholder = { Text("z. B. Kurz und direkt, duzen, metrische Einheiten …") },
+            minLines = 2, maxLines = 6,
+            shape = RoundedCornerShape(14.dp),
+            colors = fieldColors()
+        )
+        Spacer(Modifier.height(6.dp))
+        ToggleRow("Benachrichtigen, wenn eine Antwort im Hintergrund fertig ist", settings.notifyWhenDone) { settings.notifyWhenDone = it }
+    }
+}
+
 /** Gedächtnis – jetzt als Bereich in den Einstellungen */
 @Composable
 private fun MemorySection() {
@@ -585,7 +795,7 @@ private fun MemorySection() {
             }
         }
         Spacer(Modifier.height(8.dp))
-        SecondaryButton("Gesprächsverlauf löschen", Modifier.fillMaxWidth()) { store.clearChat() }
+        SecondaryButton("Alle Gespräche löschen", Modifier.fillMaxWidth()) { store.clearChat(); store.clearConversations() }
     }
 }
 
@@ -681,6 +891,10 @@ fun SettingsScreen(tick: Int, dictVm: DictationViewModel, onOpenChat: () -> Unit
                 color = AurionColors.TextLow, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 4.dp)
             )
         }
+
+        // ---------- Persönliche Anweisungen (wie bei ChatGPT/Claude) ----------
+        SectionTitle("Persönliche Anweisungen")
+        InstructionsSection()
 
         // ---------- Gedächtnis ----------
         SectionTitle("Gedächtnis")

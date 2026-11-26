@@ -27,6 +27,18 @@ class LlmEngine private constructor(private val ctx: Context) {
     private var loadedPath: String? = null
     private val mutex = Mutex()
 
+    @Volatile private var stopFlag = false
+    @Volatile private var activeSession: LlmInferenceSession? = null
+
+    /** Laufende Antwort abbrechen (Stopp-Knopf). Der bisher geschriebene Text bleibt erhalten. */
+    fun stopGeneration() {
+        stopFlag = true
+        activeSession?.let { s ->
+            // Je nach MediaPipe-Version vorhanden – daher per Reflexion
+            runCatching { s.javaClass.getMethod("cancelGenerateResponseAsync").invoke(s) }
+        }
+    }
+
     val modelPath: String? get() = Settings.get(ctx).modelPath?.takeIf { File(it).exists() }
     val isAvailable: Boolean get() = modelPath != null
 
@@ -107,6 +119,9 @@ class LlmEngine private constructor(private val ctx: Context) {
             .setTemperature(temperature)
         if (useImage) ob.setGraphOptions(GraphOptions.builder().setEnableVisionModality(true).build())
         val session = LlmInferenceSession.createFromOptions(engine, ob.build())
+        var closeHere = true
+        stopFlag = false
+        activeSession = session
         try {
             session.addQueryChunk(prompt)
             if (useImage) session.addImage(BitmapImageBuilder(scaled(image!!)).build())
@@ -115,15 +130,31 @@ class LlmEngine private constructor(private val ctx: Context) {
             } else {
                 val sb = StringBuilder()
                 val future = session.generateResponseAsync { partial, _ ->
+                    if (stopFlag) return@generateResponseAsync
                     if (partial != null) synchronized(sb) { sb.append(partial) }
                     runCatching { onPartial(clean(synchronized(sb) { sb.toString() })) }
                 }
-                // Blockierend warten, bis MediaPipe die Generierung vollständig abgeschlossen hat
-                val result = runCatching { future.get() }.getOrNull()
-                clean(synchronized(sb) { sb.toString() }.ifBlank { result.orEmpty() })
+                // Warten, bis MediaPipe fertig ist – oder der Nutzer auf Stopp drückt
+                while (!future.isDone && !stopFlag) Thread.sleep(25)
+                if (stopFlag && !future.isDone) {
+                    val t0 = System.currentTimeMillis()
+                    while (!future.isDone && System.currentTimeMillis() - t0 < 1500) Thread.sleep(25)
+                    if (!future.isDone) {
+                        // Abbrechen wird nicht unterstützt: im Hintergrund auslaufen lassen, dann schließen
+                        closeHere = false
+                        Thread {
+                            runCatching { future.get() }
+                            runCatching { session.close() }
+                        }.start()
+                    }
+                }
+                val result = if (future.isDone) runCatching { future.get() }.getOrNull() else null
+                val text = clean(synchronized(sb) { sb.toString() }.ifBlank { if (stopFlag) "" else result.orEmpty() })
+                if (stopFlag) text.ifBlank { "⏹ Abgebrochen." } else text
             }
         } finally {
-            runCatching { session.close() }
+            activeSession = null
+            if (closeHere) runCatching { session.close() }
         }
     }
 

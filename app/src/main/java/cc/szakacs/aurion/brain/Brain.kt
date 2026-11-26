@@ -565,6 +565,12 @@ class Brain(private val ctx: Context) {
         val memText = if (mem.isEmpty()) "" else
             "\nDinge, die dir der Nutzer anvertraut hat (nutze sie, wenn passend):\n" + mem.joinToString("\n") { "- ${it.text}" }
         val languageRule = if (lang == "en") "Answer in English." else "Antworte auf Deutsch."
+        val about = settings.aboutMe.trim().take(800)
+        val how = settings.replyStyle.trim().take(800)
+        val custom = buildString {
+            if (about.isNotEmpty()) append("\nÜber den Nutzer (von ihm selbst angegeben):\n").append(about)
+            if (how.isNotEmpty()) append("\nSo möchte der Nutzer, dass du antwortest (halte dich daran):\n").append(how)
+        }
         val style = if (conversation) """
             Ihr führt ein gesprochenes, lockeres Gespräch wie unter Freunden. Antworte natürlich und menschlich,
             meist in ein bis drei kurzen Sätzen, ohne Aufzählungen, ohne Markdown, ohne Emojis.
@@ -583,7 +589,7 @@ class Brain(private val ctx: Context) {
             Erfinde keine Fakten. Wenn du etwas nicht sicher weißt oder Live-Daten bräuchtest (Nachrichten, Kurse), sag das ehrlich.
             $style
             Aktuelles Datum und Uhrzeit: ${now.format(DateTimeFormatter.ofPattern("EEEE, d. MMMM yyyy, HH:mm", Locale.GERMAN))}.
-            $languageRule$memText
+            $languageRule$memText$custom
         """.trimIndent()
     }
 

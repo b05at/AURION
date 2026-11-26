@@ -55,6 +55,21 @@ class Settings private constructor(private val p: SharedPreferences) {
         get() = p.getString("wxLon", "0")!!.toDouble()
         set(v) = p.edit().putString("wxLon", v.toString()).apply()
 
+    /** Eigene Anweisungen wie bei ChatGPT/Claude: was Aurion über dich wissen soll */
+    var aboutMe: String
+        get() = p.getString("aboutMe", "")!!
+        set(v) = p.edit().putString("aboutMe", v).apply()
+
+    /** Eigene Anweisungen: wie Aurion antworten soll */
+    var replyStyle: String
+        get() = p.getString("replyStyle", "")!!
+        set(v) = p.edit().putString("replyStyle", v).apply()
+
+    /** Benachrichtigung, wenn eine Antwort im Hintergrund fertig ist */
+    var notifyWhenDone: Boolean
+        get() = p.getBoolean("notifyDone", true)
+        set(v) = p.edit().putBoolean("notifyDone", v).apply()
+
     /** Hugging-Face-Token für lizenzpflichtige Modelle (Gemma) */
     var hfToken: String?
         get() = p.getString("hfToken", null)
