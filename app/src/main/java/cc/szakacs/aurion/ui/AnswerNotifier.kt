@@ -39,6 +39,7 @@ object AnswerNotifier {
             ctx, 0,
             Intent(ctx, MainActivity::class.java)
                 .putExtra("tab", "chat")
+                .putExtra("keepChat", true)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )

@@ -74,7 +74,8 @@ class MainActivity : ComponentActivity() {
         // Nur bei einem echten Neustart der App mit leerem Gespräch beginnen
         // (nicht, wenn Android die App im Hintergrund kurz entladen hat)
         if (savedInstanceState == null) {
-            vm.newConversation()
+            // Aus der Fertig-Benachrichtigung geöffnet: Antwort zeigen statt neu anfangen
+            if (intent?.getBooleanExtra("keepChat", false) != true) vm.newConversation()
             handleShare(intent)
         }
         setContent {
