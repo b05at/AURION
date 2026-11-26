@@ -193,12 +193,8 @@ private fun AssistOverlay(vm: AssistantViewModel, onClose: () -> Unit, onOpenApp
     Box(Modifier.fillMaxSize().onSizeChanged { boxSize = it }) {
         val screenshot = shot
         if (screenshot != null) {
-            // Eingefrorener Bildschirm – darauf kann eingekreist werden (wie "Circle to Search")
-            // Hardware-Bitmap in eigener Ebene: wird nicht bei jedem Orb-Bild neu gezeichnet
-            val shown = remember(screenshot) {
-                runCatching { screenshot.copy(android.graphics.Bitmap.Config.HARDWARE, false) }.getOrNull() ?: screenshot
-            }
-            Image(shown.asImageBitmap(), null, contentScale = ContentScale.FillBounds, modifier = Modifier.fillMaxSize().graphicsLayer())
+            // Kein Standbild: der echte Bildschirm bleibt sichtbar. Eingekreist wird direkt darüber,
+            // ausgeschnitten wird aus dem beim Start aufgenommenen Screenshot (wie "Circle to Search").
             Box(
                 Modifier
                     .fillMaxSize()
@@ -246,6 +242,9 @@ private fun AssistOverlay(vm: AssistantViewModel, onClose: () -> Unit, onOpenApp
             )
         }
 
+
+        // Nur der Rand leuchtet – der Bildschirm selbst bleibt unverändert
+        EdgeGlow(st.orb)
 
         androidx.compose.runtime.CompositionLocalProvider(LocalSolidCards provides true) {
         Box(Modifier.align(Alignment.BottomCenter)) {
@@ -384,28 +383,42 @@ private fun SelectionLayer(points: List<Offset>, selection: Rect?) {
     }
 }
 
-/** Bildschirmrand leuchtet in Aurion-Farben (rotierender Verlauf) */
+/** Bildschirmrand leuchtet in Aurion-Farben (rotierender Verlauf), Stärke folgt dem Orb-Zustand */
 @Composable
-private fun EdgeGlow() {
+private fun EdgeGlow(orb: OrbState) {
     val t = rememberInfiniteTransition(label = "edge")
-    val rot by t.animateFloat(0f, 360f, infiniteRepeatable(tween(4000, easing = LinearEasing)), label = "rot")
-    Canvas(Modifier.fillMaxSize()) {
-        val colors = intArrayOf(
+    val rot = t.animateFloat(0f, 360f, infiniteRepeatable(tween(5000, easing = LinearEasing)), label = "rot")
+    val target = when (orb) {
+        OrbState.LISTENING -> 1f
+        OrbState.SPEAKING -> 0.85f
+        OrbState.THINKING -> 0.75f
+        OrbState.IDLE -> 0.45f
+    }
+    val strength = androidx.compose.animation.core.animateFloatAsState(target, tween(600), label = "edgeA")
+    val appear = remember { androidx.compose.animation.core.Animatable(0f) }
+    LaunchedEffect(Unit) { appear.animateTo(1f, tween(450)) }
+    val colors = remember {
+        intArrayOf(
             AurionColors.Blue.toArgb(), AurionColors.Cyan.toArgb(), AurionColors.Silver.toArgb(),
             AurionColors.Indigo.toArgb(), AurionColors.Blue.toArgb()
         )
+    }
+    // Zustände werden erst beim Zeichnen gelesen -> kein Neuaufbau pro Bild
+    Canvas(Modifier.fillMaxSize().graphicsLayer()) {
+        val k = strength.value * appear.value
+        if (k <= 0.01f) return@Canvas
         val shader = android.graphics.SweepGradient(center.x, center.y, colors, null).apply {
-            setLocalMatrix(android.graphics.Matrix().apply { setRotate(rot, center.x, center.y) })
+            setLocalMatrix(android.graphics.Matrix().apply { setRotate(rot.value, center.x, center.y) })
         }
         val brush = ShaderBrush(shader)
-        for ((w, a) in listOf(40f to 0.16f, 20f to 0.32f, 7f to 0.95f)) {
+        for ((w, a) in listOf(46f to 0.14f, 22f to 0.30f, 7f to 0.95f)) {
             drawRoundRect(
                 brush,
                 topLeft = Offset(w / 2, w / 2),
                 size = Size(size.width - w, size.height - w),
-                cornerRadius = CornerRadius(56f),
+                cornerRadius = CornerRadius(96f),
                 style = Stroke(width = w),
-                alpha = a
+                alpha = a * k
             )
         }
     }
