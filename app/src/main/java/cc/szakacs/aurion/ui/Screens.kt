@@ -100,6 +100,8 @@ import cc.szakacs.aurion.BuildConfig
 import cc.szakacs.aurion.bring.BringClient
 import cc.szakacs.aurion.bring.BringList
 import cc.szakacs.aurion.data.ChatMessage
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.text.style.TextAlign
 import cc.szakacs.aurion.data.LangMode
 import cc.szakacs.aurion.data.Settings
 import cc.szakacs.aurion.data.Store
