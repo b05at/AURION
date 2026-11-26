@@ -81,7 +81,8 @@ object Reminders {
         val store = Store.get(ctx)
         val r = store.reminder(id) ?: return
         cancelAlarm(ctx, id)
-        store.upsertReminder(r.copy(fired = true, acknowledged = true))
+        // Quittiert = erledigt: direkt aus der Liste entfernen
+        store.deleteReminder(id)
         NotificationManagerCompat.from(ctx).cancel(r.notificationId)
     }
 

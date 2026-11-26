@@ -646,7 +646,8 @@ fun RemindersScreen(vm: AssistantViewModel) {
     val ctx = LocalContext.current
     val all by Store.get(ctx).reminders.collectAsState()
     val open = all.filter { !it.acknowledged }
-    val done = all.filter { it.acknowledged }.sortedByDescending { it.triggerAt }
+    // Früher quittierte Erinnerungen einmalig aufräumen
+    LaunchedEffect(Unit) { if (all.any { it.acknowledged }) Store.get(ctx).clearAcknowledged() }
     var input by remember { mutableStateOf("") }
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp)) {
@@ -687,24 +688,6 @@ fun RemindersScreen(vm: AssistantViewModel) {
                         Icon(Icons.Rounded.DeleteOutline, "Löschen", tint = AurionColors.TextLow)
                     }
                 }
-            }
-        }
-        if (done.isNotEmpty()) {
-            item {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    SectionTitle("Erledigt", Modifier.weight(1f))
-                    Text(
-                        "Leeren", color = AurionColors.Cyan,
-                        modifier = Modifier.clickable { Store.get(ctx).clearAcknowledged() }.padding(top = 14.dp, end = 6.dp)
-                    )
-                }
-            }
-            items(done.take(30), key = { it.id }) { r ->
-                Text(
-                    "✓  ${r.text} · ${Reminders.formatWhen(ctx, r.triggerAt)}",
-                    color = AurionColors.TextLow, style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 5.dp)
-                )
             }
         }
     }
