@@ -159,9 +159,9 @@ class Speaker(ctx: Context) {
         // Natürliche neuronale Stimme (Piper, offline)
         if (wanted?.startsWith(NEURAL) == true) {
             val id = wanted.removePrefix(NEURAL)
-            if (cc.szakacs.aurion.speech.Packs.isInstalled(appCtx, id)) {
+            if (cc.szakacs.aurion.speech.Packs.isInstalled(appCtx, id.substringBefore('#'))) {
                 tts.stop()
-                cc.szakacs.aurion.speech.NeuralTts.speak(appCtx, id, text, settings.speechRate) { onDone?.invoke() }
+                cc.szakacs.aurion.speech.NeuralTts.speak(appCtx, id, text, settings.speechRate, lang) { onDone?.invoke() }
                 return
             }
         }
@@ -197,8 +197,8 @@ class Speaker(ctx: Context) {
         val wanted = if (lang == "en") settings.voiceEn else settings.voiceDe
         if (wanted?.startsWith(NEURAL) == true) {
             val id = wanted.removePrefix(NEURAL)
-            if (cc.szakacs.aurion.speech.Packs.isInstalled(appCtx, id)) {
-                neuralStream = cc.szakacs.aurion.speech.NeuralTts.stream(appCtx, id, settings.speechRate) { streaming = false; onDone?.invoke() }
+            if (cc.szakacs.aurion.speech.Packs.isInstalled(appCtx, id.substringBefore('#'))) {
+                neuralStream = cc.szakacs.aurion.speech.NeuralTts.stream(appCtx, id, settings.speechRate, lang) { streaming = false; onDone?.invoke() }
                 return
             }
         }

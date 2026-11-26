@@ -244,11 +244,6 @@ private fun Header() {
             .padding(horizontal = 20.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Image(
-            painterResource(R.drawable.aurion_emblem), null,
-            modifier = Modifier.size(38.dp).clip(CircleShape)
-        )
-        Spacer(Modifier.width(12.dp))
         Text(
             "AURION",
             style = TextStyle(

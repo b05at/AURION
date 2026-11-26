@@ -1029,19 +1029,42 @@ private fun VoiceSection() {
             "Klingen deutlich menschlicher als die Systemstimmen. Einmal laden, danach komplett offline.",
             style = MaterialTheme.typography.bodyMedium, color = AurionColors.TextLow, modifier = Modifier.padding(bottom = 4.dp)
         )
-        Packs.voices.filter { it.lang == lang }.forEach { p ->
+        Packs.voices.filter { it.lang == lang || it.lang == "multi" }.forEach { p ->
             val id = Speaker.NEURAL + p.id
+            val pState = packStates[p.id] ?: Packs.state(ctx, p.id)
+            val inPack = selectedNow?.substringBefore('#') == id
             PackRow(
                 pack = p,
-                state = packStates[p.id] ?: Packs.state(ctx, p.id),
-                selected = selectedNow == id,
-                onSelect = { choose(id) },
+                state = pState,
+                selected = if (p.speakers > 1) inPack else selectedNow == id,
+                onSelect = { choose(if (p.speakers > 1) "$id#0" else id) },
                 onDelete = {
                     Packs.delete(ctx, p.id)
-                    if (selDe == id) { selDe = null; settings.voiceDe = null }
-                    if (selEn == id) { selEn = null; settings.voiceEn = null }
+                    if (selDe?.substringBefore('#') == id) { selDe = null; settings.voiceDe = null }
+                    if (selEn?.substringBefore('#') == id) { selEn = null; settings.voiceEn = null }
                 },
             )
+            // Mehrere Sprecher: einzeln anhören und wählen
+            if (p.speakers > 1 && pState is PackState.Ready) {
+                Row(
+                    Modifier.padding(start = 4.dp, bottom = 6.dp).horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    (0 until p.speakers).forEach { i ->
+                        val vid = "$id#$i"
+                        val sel = selectedNow == vid
+                        Text(
+                            "Stimme ${i + 1}", fontSize = 13.sp,
+                            color = if (sel) Color(0xFF0B1020) else AurionColors.TextHigh,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(if (sel) AurionColors.Cyan else Color(0x262F7BFF))
+                                .clickable { choose(vid) }
+                                .padding(horizontal = 12.dp, vertical = 7.dp)
+                        )
+                    }
+                }
+            }
         }
         Text(
             "Android-Stimmen",

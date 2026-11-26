@@ -8,6 +8,8 @@ import com.k2fsa.sherpa.onnx.OfflineTts
 import com.k2fsa.sherpa.onnx.OfflineTtsConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
+import com.k2fsa.sherpa.onnx.OfflineTtsSupertonicModelConfig
+import com.k2fsa.sherpa.onnx.GenerationConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -39,6 +41,30 @@ object NeuralTts {
         engine?.release()
         engine = null
         val dir = Packs.dir(ctx, id)
+        if (Packs.byId(id)?.engine == "supertonic") {
+            fun f(n: String) = dir.walkTopDown().firstOrNull { it.isFile && it.name == n }?.absolutePath
+                ?: throw IllegalStateException("Stimme nicht vollständig installiert ($n)")
+            fun onnx(prefix: String) = dir.walkTopDown().firstOrNull { it.isFile && it.name.startsWith(prefix) && it.name.endsWith(".onnx") }?.absolutePath
+                ?: throw IllegalStateException("Stimme nicht vollständig installiert ($prefix)")
+            val cfg = OfflineTtsConfig(
+                model = OfflineTtsModelConfig(
+                    supertonic = OfflineTtsSupertonicModelConfig(
+                        durationPredictor = onnx("duration_predictor"),
+                        textEncoder = onnx("text_encoder"),
+                        vectorEstimator = onnx("vector_estimator"),
+                        vocoder = onnx("vocoder"),
+                        ttsJson = f("tts.json"),
+                        unicodeIndexer = f("unicode_indexer.bin"),
+                        voiceStyle = f("voice.bin"),
+                    ),
+                    numThreads = 2,
+                    debug = false,
+                    provider = "cpu",
+                ),
+                maxNumSentences = 1,
+            )
+            return OfflineTts(null, cfg).also { engine = it; loadedId = id }
+        }
         val model = dir.listFiles { f -> f.name.endsWith(".onnx") }?.maxByOrNull { it.length() }
             ?: throw IllegalStateException("Stimme nicht vollständig installiert")
         val tokens = File(dir, "tokens.txt")
@@ -61,6 +87,10 @@ object NeuralTts {
             loadedId = id
         }
     }
+
+    /** "paket#sprecher" -> (paket, sprecher) */
+    fun split(voice: String): Pair<String, Int> =
+        voice.substringBefore('#') to (voice.substringAfter('#', "0").toIntOrNull() ?: 0)
 
     fun releaseIf(id: String) {
         if (loadedId == id) synchronized(this) {
@@ -94,15 +124,17 @@ object NeuralTts {
         fun finish() { ch.close() }
     }
 
-    fun speak(ctx: Context, id: String, text: String, speed: Float, onDone: () -> Unit) {
-        val s = stream(ctx, id, speed, onDone)
+    fun speak(ctx: Context, id: String, text: String, speed: Float, lang: String = "de", onDone: () -> Unit) {
+        val s = stream(ctx, id, speed, lang, onDone)
         s.add(text)
         s.finish()
     }
 
     /** Startet die Wiedergabe sofort; Text kann laufend nachgereicht werden (für Live-Antworten). */
-    fun stream(ctx: Context, id: String, speed: Float, onDone: () -> Unit): Stream {
+    fun stream(ctx: Context, voice: String, speed: Float, lang: String = "de", onDone: () -> Unit): Stream {
         stop()
+        val (id, sid) = split(voice)
+        val supertonic = Packs.byId(id)?.engine == "supertonic"
         val app = ctx.applicationContext
         val input = Channel<String>(Channel.UNLIMITED)
         job = scope.launch {
@@ -136,7 +168,13 @@ object NeuralTts {
                     for (chunk in input) {
                         for (sentence in sentences(chunk)) {
                             if (!isActive) break
-                            val a = genLock.withLock { eng.generate(sentence, 0, speed.coerceIn(0.6f, 1.8f)) }
+                            val sp = speed.coerceIn(0.6f, 1.8f)
+                            val a = genLock.withLock {
+                                if (supertonic) eng.generateWithConfig(
+                                    sentence,
+                                    GenerationConfig(sid = sid, speed = sp, numSteps = 8, extra = mapOf("lang" to if (lang == "en") "en" else "de"))
+                                ) else eng.generate(sentence, sid, sp)
+                            }
                             audio.send(a.samples + FloatArray(sr / 12))
                         }
                     }
@@ -172,6 +210,6 @@ object NeuralTts {
     /** Kurze Hörprobe */
     fun preview(ctx: Context, id: String, lang: String, speed: Float) {
         val text = if (lang == "en") "Hi, I'm Aurion. This is how I sound with this voice." else "Hallo, ich bin Aurion. So klinge ich mit dieser Stimme."
-        speak(ctx, id, text, speed) {}
+        speak(ctx, id, text, speed, lang) {}
     }
 }

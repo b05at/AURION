@@ -28,6 +28,10 @@ data class Pack(
     val description: String,
     val sizeLabel: String,
     val url: String,
+    /** "vits" (Piper) oder "supertonic" */
+    val engine: String = "vits",
+    /** Anzahl wählbarer Sprecher im Paket */
+    val speakers: Int = 1,
 )
 
 sealed class PackState {
@@ -47,6 +51,9 @@ object Packs {
     private const val ASR = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/"
 
     val voices = listOf(
+        Pack("sherpa-onnx-supertonic-3-tts-int8-2026-05-11", PackKind.VOICE, "multi", "Supertonic 3 (neu)", "10 Stimmen · am natürlichsten, Deutsch & Englisch", "≈ 120 MB", TTS + "sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2", engine = "supertonic", speakers = 10),
+        Pack("vits-piper-de_DE-miro-high", PackKind.VOICE, "de", "Miro", "Sehr natürlich, neue Stimme", "≈ 110 MB", TTS + "vits-piper-de_DE-miro-high.tar.bz2"),
+        Pack("vits-piper-de_DE-dii-high", PackKind.VOICE, "de", "Dii", "Sehr natürlich, neue Stimme", "≈ 110 MB", TTS + "vits-piper-de_DE-dii-high.tar.bz2"),
         Pack("vits-piper-de_DE-thorsten-high", PackKind.VOICE, "de", "Thorsten", "Männlich · sehr natürlich", "≈ 110 MB", TTS + "vits-piper-de_DE-thorsten-high.tar.bz2"),
         Pack("vits-piper-de_DE-thorsten-medium", PackKind.VOICE, "de", "Thorsten (schnell)", "Männlich · gute Qualität, flott", "≈ 65 MB", TTS + "vits-piper-de_DE-thorsten-medium.tar.bz2"),
         Pack("vits-piper-de_DE-kerstin-low", PackKind.VOICE, "de", "Kerstin", "Weiblich · klar, kompakt", "≈ 30 MB", TTS + "vits-piper-de_DE-kerstin-low.tar.bz2"),
