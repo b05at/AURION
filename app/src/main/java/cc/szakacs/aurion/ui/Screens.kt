@@ -344,7 +344,7 @@ fun ChatScreen(vm: AssistantViewModel, dictVm: DictationViewModel) {
             ) {
                 AurionOrb(
                     if (dict.active) (if (dict.recording) OrbState.LISTENING else if (dict.busy != null) OrbState.THINKING else OrbState.IDLE) else st.orb,
-                    if (dict.active) ({ dict.level }) else ({ vm.level.value }), size = 76.dp
+                    level = { if (dict.active) dict.level else vm.level.value }, size = 76.dp
                 )
             }
         }

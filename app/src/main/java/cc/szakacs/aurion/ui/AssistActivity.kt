@@ -343,7 +343,7 @@ private fun AssistOverlay(vm: AssistantViewModel, onClose: () -> Unit, onOpenApp
                         ),
                     contentAlignment = Alignment.Center
                 ) {
-                    AurionOrb(st.orb, { vm.level.value }, size = if (lens != null) 96.dp else 150.dp)
+                    AurionOrb(st.orb, level = { vm.level.value }, size = if (lens != null) 96.dp else 150.dp)
                 }
             }
         }
