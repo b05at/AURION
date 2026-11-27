@@ -135,7 +135,8 @@ class AssistActivity : ComponentActivity() {
                 })
             }
         }
-        if (savedInstanceState == null && Settings.get(this).listenOnOpen) vm.startListening()
+        val forced = cc.szakacs.aurion.assist.AurionInteractionService.consumeListen()
+        if (savedInstanceState == null && (forced || Settings.get(this).listenOnOpen)) vm.startListening()
     }
 
     override fun onNewIntent(intent: Intent) {

@@ -20,6 +20,36 @@ import cc.szakacs.aurion.voice.Recognizers
 
 /** Macht Aurion als "Digitaler Assistent" auswählbar (Seitentaste / Assistent-Geste). */
 class AurionInteractionService : VoiceInteractionService() {
+    override fun onReady() {
+        super.onReady()
+        instance = this
+    }
+
+    override fun onShutdown() {
+        if (instance === this) instance = null
+        super.onShutdown()
+    }
+
+    companion object {
+        @Volatile private var instance: AurionInteractionService? = null
+        @Volatile private var listenAt = 0L
+
+        /** Assistent öffnen und sofort zuhören (z. B. aus Android Auto). false = Aurion ist nicht als Assistent gesetzt */
+        fun launchListening(): Boolean {
+            val s = instance ?: return false
+            listenAt = android.os.SystemClock.uptimeMillis()
+            android.os.Handler(android.os.Looper.getMainLooper()).post { runCatching { s.showSession(Bundle(), 0) } }
+            return true
+        }
+
+        /** Vom Overlay abgefragt: soll es direkt zuhören? */
+        fun consumeListen(): Boolean {
+            val r = android.os.SystemClock.uptimeMillis() - listenAt < 8000
+            listenAt = 0
+            return r
+        }
+    }
+
     /** Seitentaste auf dem Sperrbildschirm: Overlay direkt dort anzeigen */
     override fun onLaunchVoiceAssistFromKeyguard() {
         runCatching { showSession(Bundle(), 0) }

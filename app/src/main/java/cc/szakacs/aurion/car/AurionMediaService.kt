@@ -146,6 +146,10 @@ class AurionMediaService : MediaBrowserServiceCompat() {
 
         override fun onPlay() = listenAndAsk()
 
+        // Lenkradtasten (Weiter/Zurück) starten ebenfalls "Frag Aurion", solange Aurion die aktive Medienquelle ist
+        override fun onSkipToNext() = listenAndAsk()
+        override fun onSkipToPrevious() = listenAndAsk()
+
         override fun onPause() = stopAll()
         override fun onStop() = stopAll()
     }
@@ -160,7 +164,8 @@ class AurionMediaService : MediaBrowserServiceCompat() {
     private fun state(s: Int, error: String? = null) = PlaybackStateCompat.Builder()
         .setActions(
             PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PAUSE or PlaybackStateCompat.ACTION_STOP or
-                PlaybackStateCompat.ACTION_PLAY_FROM_MEDIA_ID or PlaybackStateCompat.ACTION_PLAY_FROM_SEARCH
+                PlaybackStateCompat.ACTION_PLAY_FROM_MEDIA_ID or PlaybackStateCompat.ACTION_PLAY_FROM_SEARCH or
+                PlaybackStateCompat.ACTION_SKIP_TO_NEXT or PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS
         )
         .setState(s, PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN, 1f)
         .apply { if (error != null) setErrorMessage(PlaybackStateCompat.ERROR_CODE_APP_ERROR, error) }
@@ -218,6 +223,12 @@ class AurionMediaService : MediaBrowserServiceCompat() {
         }
         job?.cancel()
         speaker.stop()
+        // Bevorzugt: als Standard-Assistent zuhören – nur der Assistent bekommt das Mikrofon auch im Hintergrund
+        if (cc.szakacs.aurion.assist.AurionInteractionService.launchListening()) {
+            show(if (en) "Listening – speak now" else "Ich höre zu – sprich jetzt", if (en) "The answer will be read aloud" else "Die Antwort wird vorgelesen")
+            session.setPlaybackState(state(PlaybackStateCompat.STATE_PAUSED))
+            return
+        }
         job = scope.launch {
             show(if (en) "Listening …" else "Ich höre zu …", if (en) "Ask your question" else "Stell deine Frage")
             session.setPlaybackState(state(PlaybackStateCompat.STATE_PLAYING))
