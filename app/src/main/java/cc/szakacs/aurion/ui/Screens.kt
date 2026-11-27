@@ -1246,7 +1246,7 @@ private fun CarSection() {
         @Composable
         fun check(ok: Boolean, label: String, action: String, onClick: () -> Unit) {
             Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(if (ok) "✓" else "•", color = if (ok) AurionColors.Cyan else AurionColors.Amber, fontSize = 18.sp, modifier = Modifier.width(24.dp))
+                Text(if (ok) "✓" else "•", color = if (ok) AurionColors.Cyan else AurionColors.Amber, fontSize = 18.sp, modifier = Modifier.padding(end = 8.dp))
                 Text(label, color = AurionColors.TextHigh, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                 if (!ok) Text(action, color = AurionColors.Cyan, fontSize = 14.sp,
                     modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick).padding(8.dp))
