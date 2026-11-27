@@ -181,15 +181,12 @@
         <meta-data
             android:name="com.google.android.gms.car.application"
             android:resource="@xml/automotive_app_desc" />
-        <meta-data
-            android:name="androidx.car.app.minCarApiLevel"
-            android:value="1" />
+        <!-- Als Medien-App: wird mit "Unbekannte Quellen" auch ohne Play Store angezeigt -->
         <service
-            android:name=".car.AurionCarAppService"
+            android:name=".car.AurionMediaService"
             android:exported="true">
             <intent-filter>
-                <action android:name="androidx.car.app.CarAppService" />
-                <category android:name="androidx.car.app.category.IOT" />
+                <action android:name="android.media.browse.MediaBrowserService" />
             </intent-filter>
         </service>
 

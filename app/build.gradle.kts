@@ -87,5 +87,5 @@ dependencies {
     implementation("org.apache.commons:commons-compress:1.27.1")
 
     // Android Auto (Car App Library)
-    implementation("androidx.car.app:app:1.7.0")
+    implementation("androidx.media:media:1.7.0")
 }
