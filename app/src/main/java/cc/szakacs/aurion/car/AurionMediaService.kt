@@ -223,8 +223,18 @@ class AurionMediaService : MediaBrowserServiceCompat() {
         }
         job?.cancel()
         speaker.stop()
-        // Bevorzugt: als Standard-Assistent zuhören – nur der Assistent bekommt das Mikrofon auch im Hintergrund
-        if (cc.szakacs.aurion.assist.AurionInteractionService.launchListening()) {
+        // 1) Aurion-Fenster direkt öffnen (braucht "Über anderen Apps anzeigen") – sichtbares Fenster = Mikrofon erlaubt,
+        //    unabhängig davon, welcher Assistent gerade eingestellt ist
+        val overlayOk = android.provider.Settings.canDrawOverlays(this) && runCatching {
+            startActivity(
+                android.content.Intent(this, cc.szakacs.aurion.ui.AssistActivity::class.java)
+                    .putExtra("listen", true)
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }.isSuccess
+        // 2) sonst als Standard-Assistent zuhören
+        if (overlayOk || (cc.szakacs.aurion.assist.AssistantRole.isDefault(this) &&
+                cc.szakacs.aurion.assist.AurionInteractionService.launchListening())) {
             show(if (en) "Listening – speak now" else "Ich höre zu – sprich jetzt", if (en) "The answer will be read aloud" else "Die Antwort wird vorgelesen")
             session.setPlaybackState(state(PlaybackStateCompat.STATE_PAUSED))
             return

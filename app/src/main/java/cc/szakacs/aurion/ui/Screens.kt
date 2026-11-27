@@ -886,6 +886,9 @@ fun SettingsScreen(tick: Int, dictVm: DictationViewModel, onOpenChat: () -> Unit
         MemorySection()
 
         // ---------- Sprache ----------
+        SectionTitle("Android Auto")
+        CarSection()
+
         SectionTitle("Sprache")
         GlassCard(Modifier.fillMaxWidth()) {
             var mode by remember { mutableStateOf(settings.langMode) }
@@ -1225,6 +1228,43 @@ fun PackRow(pack: Pack, state: PackState, selected: Boolean = false, onSelect: (
             is PackState.Failed -> Text(state.message, color = AurionColors.Amber, fontSize = 12.sp)
             else -> Unit
         }
+    }
+}
+
+/** Checkliste, damit "Frag Aurion" im Auto zuhören kann */
+@Composable
+private fun CarSection() {
+    val ctx = LocalContext.current
+    val tick = LocalResumeTick.current
+    val overlay = remember(tick) { android.provider.Settings.canDrawOverlays(ctx) }
+    val whisper = remember(tick) { Packs.firstInstalledWhisper(ctx) != null }
+    GlassCard(Modifier.fillMaxWidth()) {
+        Text(
+            "Im Auto findest du Aurion als Medien-App. Damit „Frag Aurion“ und die Lenkradtasten Weiter/Zurück dich hören, braucht Aurion:",
+            color = AurionColors.TextMid, style = MaterialTheme.typography.bodyMedium
+        )
+        @Composable
+        fun check(ok: Boolean, label: String, action: String, onClick: () -> Unit) {
+            Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(if (ok) "✓" else "•", color = if (ok) AurionColors.Cyan else AurionColors.Amber, fontSize = 18.sp, modifier = Modifier.width(24.dp))
+                Text(label, color = AurionColors.TextHigh, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                if (!ok) Text(action, color = AurionColors.Cyan, fontSize = 14.sp,
+                    modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick).padding(8.dp))
+            }
+        }
+        check(overlay, "Über anderen Apps anzeigen", "Erlauben") {
+            runCatching {
+                ctx.startActivity(
+                    Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:${ctx.packageName}"))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            }
+        }
+        check(whisper, "Whisper-Spracherkennung geladen", "Unten laden") {}
+        Text(
+            "Die Sprachtaste am Lenkrad startet in Android Auto immer Google/Gemini – das lässt Android Auto nicht umstellen. Nutze in Aurion „Frag Aurion“ oder die Weiter/Zurück-Tasten.",
+            color = AurionColors.TextLow, fontSize = 12.sp, modifier = Modifier.padding(top = 10.dp)
+        )
     }
 }
 
